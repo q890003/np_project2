@@ -53,8 +53,8 @@ class Pipe_class{
 		int numPipe_count;
 };
 vector<Pipe_class> pipe_vector;
-int socket_fd =0;
-int client_fd = 0;
+//int socket_fd =0;				// fd move into main scope. haven't test if it works yet.
+//int client_fd = 0;
 
 
 int main(){
@@ -68,7 +68,8 @@ int main(){
 	if (socket_fd == -1){
         cout <<"Fail to create a socket." << endl;
     }
-	
+	int socket_fd =0;
+	int client_fd = 0;
 	struct sockaddr_in serverInfo,clientInfo;
 	socklen_t  addrlen = sizeof(clientInfo);
 	bzero(&serverInfo,sizeof(serverInfo));  //initiialize server info.
