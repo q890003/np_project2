@@ -102,7 +102,8 @@ int main(){
 				send(STDOUT_FILENO, output_buffer.c_str(), (size_t) output_buffer.length(), 0);
 				recv(STDIN_FILENO, input_buffer, sizeof(input_buffer), 0);
 				char* pch = strchr(input_buffer,'\r');
-				*pch = '\0';
+				if( pch != NULL)
+					*pch = '\0';
 				cmd = input_buffer;
 				stringstream sscmd(cmd);
 					if( !special_cmd(sscmd)){
