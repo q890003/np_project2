@@ -1,3 +1,3 @@
-all:	npshell.cpp
-	g++ -o npshell npshell.cpp
+all:	np_simple.cpp
+	g++ -o np_simple np_simple.cpp
 

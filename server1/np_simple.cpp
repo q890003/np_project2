@@ -9,12 +9,21 @@
 #include <unistd.h>		// wait(),exec(), pipe(), fork()
 #include <sys/types.h> //								fork() 
 #include <sys/wait.h>  //wait()
+#include <sys/socket.h>
+#include <netinet/in.h>
 #include <fcntl.h>		//open()
-#include <string.h>	//for version2 at line 135-145 strtok
-#include <stdlib.h>	//for version2 at line 135-145 strtok
-bool shell_exit = false;
-
+//#include <string.h>	//for version2 at line 135-145 strtok
+//#include <stdlib.h>	//for version2 at line 135-145 strtok
 using namespace std;
+
+
+void childHandler(int);
+void convert_argv_to_consntchar(const char, vector<string> );
+void parse_cmd(stringstream &);
+bool special_cmd(stringstream&);
+bool shell_exit = false;
+vector<string> retrieve_argv(stringstream&);
+
 class Pipe_class{
 	public: 
 	int get_read(){
@@ -43,51 +52,86 @@ class Pipe_class{
 		int pfd[2];
 		int numPipe_count;
 };
+vector<Pipe_class> pipe_vector;
+int socket_fd =0;
+int client_fd = 0;
+
+
+int main(){
+	
+	setenv("PATH", "bin:.", 1) ; 
+    string cmd;
+	char input_buffer[1024]= {0};
+	string output_buffer="% ";
+
+	socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (socket_fd == -1){
+        cout <<"Fail to create a socket." << endl;
+    }
+	
+	struct sockaddr_in serverInfo,clientInfo;
+	socklen_t  addrlen = sizeof(clientInfo);
+	bzero(&serverInfo,sizeof(serverInfo));  //initiialize server info.
+	bzero(&serverInfo,sizeof(clientInfo));  //initiialize client info.
+	serverInfo.sin_family = PF_INET;
+    serverInfo.sin_addr.s_addr = INADDR_ANY;
+    serverInfo.sin_port = htons(8700);
+	bind(socket_fd, (struct sockaddr *)&serverInfo, sizeof(serverInfo));
+	listen(socket_fd, 30);
+	
+	
+	while(true){
+
+		client_fd = accept(socket_fd, (struct sockaddr*) &clientInfo, &addrlen);
+		pid_t replica_pid;
+		replica_pid = fork();
+		if(replica_pid == -1){
+			cout << "fork failed" << endl;
+		}
+		
+		if(replica_pid == 0){
+			
+			cout <<"replica server." << endl;
+			dup2(client_fd, STDIN_FILENO);
+			dup2(client_fd, STDOUT_FILENO);
+			dup2(client_fd, STDERR_FILENO);
+			close(client_fd);
+				
+		
+			while(true){
+				send(STDOUT_FILENO, output_buffer.c_str(), (size_t) output_buffer.length(), 0);
+				recv(STDIN_FILENO, input_buffer, sizeof(input_buffer), 0);
+				char* pch = strchr(input_buffer,'\r');
+				*pch = '\0';
+				cmd = input_buffer;
+				stringstream sscmd(cmd);
+					if( !special_cmd(sscmd)){
+						if(shell_exit == true){
+							break;
+						}
+						parse_cmd(sscmd);
+					}
+			}
+			close(STDIN_FILENO);
+			close(STDOUT_FILENO);
+			close(STDERR_FILENO);
+			exit(-1);
+		}
+		close(client_fd);		//master server close client socket.
+	}
+}
+
+
+
 void childHandler(int signo){
 	int status;
 	while (waitpid(-1, &status, WNOHANG) > 0);
 }
-vector<Pipe_class> pipe_vector;
 void convert_argv_to_consntchar(const char *argv[], vector<string> &argv_table) {
 	for (int i=0; i<argv_table.size(); i++) {
 		argv[i] = argv_table[i].c_str();
 	}
 	argv[argv_table.size()] = NULL;
-}
-bool special_cmd(stringstream &sscmd){
-	stringstream ss;
-	string cmdline = sscmd.str();
-    string parsed_word, cmd;
-	
-	ss << cmdline;
-    ss>> parsed_word;
-    if(parsed_word == "printenv"){
-		ss >> parsed_word;
-		if(parsed_word == "PATH" || parsed_word == "LANG"){
-			char* pPath = getenv(parsed_word.c_str());
-			if(pPath != NULL)
-				cout<<pPath<<endl;
-		}
-		return true;
-    }
-    else if(parsed_word == "setenv"){
-        ss >> cmd;
-        ss >> parsed_word;
-        setenv(cmd.c_str(), parsed_word.c_str(), 1) ;   
-		return true;
-    }else if (parsed_word == "exit"){
-			shell_exit = true;
-		}
-	return false;
-}
-vector<string> retrieve_argv(stringstream &ss){
-
-		vector<string> argv;
-		string token;
-
-		while((ss >> ws) && !strchr("|!>", ss.peek()) && (ss >> token)  )
-				argv.push_back(token);
-		return argv;
 }
 void parse_cmd(stringstream &sscmd){
 	bool pipe_flag;	
@@ -212,6 +256,7 @@ void parse_cmd(stringstream &sscmd){
 			usleep(100);
 		}
 		if( pid == 0){	 											// child
+
 			if(target_flag == true){
 				dup2(newProcessIn, STDIN_FILENO);  //input stream never be the same as STDIN_NO
 				close(newProcessIn);
@@ -243,6 +288,7 @@ void parse_cmd(stringstream &sscmd){
 
 			
 		} else if(pid >0 ){			//parent
+			
 			signal(SIGCHLD, childHandler);
 			for(int i = 0; i< pipe_vector.size(); i++){
 				pipe_vector[i].count_decrease();
@@ -263,19 +309,38 @@ void parse_cmd(stringstream &sscmd){
 		}
 	}
 }
-
-int main(){
-	setenv("PATH", "bin:.", 1) ; 
-    string cmd;
-    while(true){
-        cout << "% ";
-        getline(cin, cmd);
-		stringstream sscmd(cmd);
-			if( !special_cmd(sscmd)){
-				if(shell_exit == true){
-					break;
-				}
-				parse_cmd(sscmd);
-			}
+bool special_cmd(stringstream &sscmd){
+	stringstream ss;
+	string cmdline = sscmd.str();
+    string parsed_word, cmd;
+	
+	ss << cmdline;
+    ss>> parsed_word;
+    if(parsed_word == "printenv"){
+		ss >> parsed_word;
+		if(parsed_word == "PATH" || parsed_word == "LANG"){
+			char* pPath = getenv(parsed_word.c_str());
+			if(pPath != NULL)
+				cout<<pPath<<endl;
+		}
+		return true;
     }
+    else if(parsed_word == "setenv"){
+        ss >> cmd;
+        ss >> parsed_word;
+        setenv(cmd.c_str(), parsed_word.c_str(), 1) ;   
+		return true;
+    }else if (parsed_word == "exit"){
+			shell_exit = true;
+		}
+	return false;
+}
+vector<string> retrieve_argv(stringstream &ss){
+
+		vector<string> argv;
+		string token;
+
+		while((ss >> ws) && !strchr("|!>", ss.peek()) && (ss >> token)  )
+				argv.push_back(token);
+		return argv;
 }
