@@ -20,7 +20,7 @@
 //#include <stdlib.h>	//for version2 at line 135-145 strtok
 using namespace std;
 #define CLIENT_LIMIT 30
-#define CLIENT_NAME_SIZE 64
+#define CLIENT_NAME_SIZE 32
 #define PORT_SIZE	6
 #define MEMBER_JOIN 0
 #define MEMBER_LEAVE 1
@@ -28,8 +28,8 @@ using namespace std;
 
 //===Chatting Room====
 void broadcast(int, int);  		//(int client_ID, int Action)
-string Welcome = "***************************************\n** Welcome to the information server **\n***************************************\n";
-string prompt = "% ";
+char Welcome[] = "***************************************\n** Welcome to the information server **\n***************************************\n";
+char prompt[] = "% ";
 //==================
 
 
@@ -37,7 +37,7 @@ string prompt = "% ";
 //=======parsing======
 void childHandler(int);
 void convert_argv_to_consntchar(const char, vector<string> );
-void parse_cmd(stringstream &);
+void parse_cmd(int, stringstream &);
 bool special_cmd(stringstream&);
 bool shell_exit = false;
 vector<string> retrieve_argv(stringstream&);
@@ -77,13 +77,13 @@ class Client_state{
 			client_fd = -1;
 			client_ID = -1;
 			holding_service = false;
-			strncpy(client_name,"\'(no name)\'",strlen("\'(no name)\'") );
+			strncpy(client_name,"(no name)",strlen("(no name)") );
 		}
 		void reset(){
 			client_fd = -1;
 			client_ID = -1;
 			memset( client_name, '\0', CLIENT_NAME_SIZE*sizeof(char) );
-			strncpy(client_name,"\'(no name)\'",strlen("\'(no name)\'") );
+			strncpy(client_name,"(no name)",strlen("(no name)") );
 			memset( IP, 0, INET_ADDRSTRLEN*sizeof(char) );
 			port = 0;
 		};
@@ -156,7 +156,7 @@ int main(int argc, char* argv[]){
 	int SERVER_STDOUT_FD = dup(STDOUT_FILENO);
 	int SERVER_STDERR_FD = dup(STDERR_FILENO);
 	int serving_to_client_fd = -1;
-	
+	int serving_client_id = -1;
 	while(true){
 		 rfds = master; // update rfds from master.
 
@@ -167,7 +167,6 @@ int main(int argc, char* argv[]){
 		}
 		for(int i = 0; i <= fdmax; i++) {
 			if (FD_ISSET(i, &rfds)) {
-				serving_to_client_fd = i;
 				//new connection 
 				if (i == listener) {
 					newfd = accept(listener, (struct sockaddr *)&clientSockInfo,	&addrlen);		//client_addr what's diffferent storage and socearr?
@@ -175,7 +174,9 @@ int main(int argc, char* argv[]){
 						cout << "fail of createing client_fd" << endl;
 					//fd create succeed.
 					}else{
-						send(newfd, Welcome.c_str(), Welcome.length(), 0 );
+						serving_to_client_fd = newfd;
+						send(newfd, Welcome, sizeof(Welcome), 0 );
+						
 						for(int j= 0; j <CLIENT_LIMIT; j++){			
 							if(Client_manage_list[j].client_ID  ==  -1 ){
 								//char charID[25];
@@ -186,7 +187,6 @@ int main(int argc, char* argv[]){
 								inet_ntop(AF_INET, &(clientSockInfo.sin_addr), Client_manage_list[j].IP, INET_ADDRSTRLEN);
 								Client_manage_list[j].port = clientSockInfo.sin_port;
 								broadcast(Client_manage_list[j].client_ID, MEMBER_JOIN);
-								serving_to_client_fd = newfd ;
 								cout << Client_manage_list[j].IP << " is connect" << endl;
 								break;
 							}
@@ -198,8 +198,14 @@ int main(int argc, char* argv[]){
 
 					}
 				}else{
+					serving_to_client_fd = i;
+					for(int j = 0; j < CLIENT_LIMIT; j++){
+						if(Client_manage_list[j].client_fd == i){
+							serving_client_id = j;
+						}
+					}
 					
-					nbytes = recv(i, input_buffer, sizeof(input_buffer), 0);	//not handle recv <0 yet.
+					nbytes = recv(serving_to_client_fd, input_buffer, sizeof(input_buffer), 0);	//not handle recv <0 yet.
 					//handling '\r' from telnet.
 					char* pch = strchr(input_buffer,'\r');		
 					if( pch != NULL){
@@ -207,40 +213,33 @@ int main(int argc, char* argv[]){
 					}
 					string cmd;
 					cmd = input_buffer;
-					
 					if( nbytes ==0 || cmd =="exit"){
 						//connection aborted
-						for(int j = 0; j < CLIENT_LIMIT; j++){
-							if(Client_manage_list[j].client_fd == i){
-								broadcast(Client_manage_list[j].client_ID, MEMBER_LEAVE);
-								Client_manage_list[j].reset();
-							}
-						}
+						broadcast(Client_manage_list[serving_client_id].client_ID, MEMBER_LEAVE);
+						Client_manage_list[serving_client_id].reset();
+
 						close(i);
 						FD_CLR(i, &master);
 					}else{	//there is data comming
 						stringstream sscmd(cmd);
+						
 						if( !special_cmd(sscmd)){
 							if(shell_exit == true){
 								//no op
 							}else{
-								for(int j = 0; j < CLIENT_LIMIT; j++){
-									if(Client_manage_list[j].client_fd == i){
-										Client_manage_list[j].holding_service = true;
-									}
-								}
-								//dup2(i, STDIN_FILENO);
-								dup2(i, STDOUT_FILENO);
-								//dup2(i, STDERR_FILENO);
-								parse_cmd(sscmd);
-								//dup2(SERVER_STDIN_FD, STDIN_FILENO);
+								dup2(serving_to_client_fd, STDIN_FILENO);
+								dup2(serving_to_client_fd, STDOUT_FILENO);
+								dup2(serving_to_client_fd, STDERR_FILENO);
+								parse_cmd(serving_client_id, sscmd);
+								dup2(SERVER_STDIN_FD, STDIN_FILENO);
 								dup2(SERVER_STDOUT_FD, STDOUT_FILENO);
-								//dup2(SERVER_STDERR_FD, STDERR_FILENO);
+								dup2(SERVER_STDERR_FD, STDERR_FILENO);
 							}
 						}
 					}
 				}
-			send(serving_to_client_fd, prompt.c_str(), prompt.length(), 0);
+			usleep(1000);
+			send(serving_to_client_fd, prompt, sizeof(prompt), 0);
 			}
 		}
 	}
@@ -259,8 +258,8 @@ void broadcast(int ID_num, int action){
 			broadcast_content = ss.str();
 			break;
 		case MEMBER_LEAVE:
-			ss << "*** User " << Client_manage_list[ID_num].client_name;
-			ss << " left. *** \n" ;
+			ss << "*** User \'" << Client_manage_list[ID_num].client_name;
+			ss << "\' left. *** \n" ;
 			broadcast_content = ss.str();
 			break;
 		case MEMBER_YELL:
@@ -288,7 +287,7 @@ void convert_argv_to_consntchar(const char *argv[], vector<string> &argv_table) 
 	}
 	argv[argv_table.size()] = NULL;
 }
-void parse_cmd(stringstream &sscmd){
+void parse_cmd(int serving_client_id, stringstream &sscmd){
 	bool pipe_flag;	
 	bool pipe_create_flag;
 	bool shockMarckflag;
@@ -317,13 +316,12 @@ void parse_cmd(stringstream &sscmd){
 		//===============ChatRoom cmd================
 		if(argv_table.at(0) == "who" ){
 			cout << "<ID>\t<nickname>\t<IP:port>\t<indicate me> "<<endl;
-			for(int  j= 0; j <CLIENT_LIMIT; j++){
-				if(Client_manage_list[j].client_ID != -1){
-					if(Client_manage_list[j].holding_service == true){
-						cout <<Client_manage_list[j].client_ID <<"\t"<< Client_manage_list[j].client_name <<"\t" <<Client_manage_list[j].IP <<":"<<Client_manage_list[j].port  << "\t<- me" <<endl;
-						Client_manage_list[j].holding_service = false;
+			for(int  ID_transverse= 0; ID_transverse <CLIENT_LIMIT; ID_transverse++){
+				if(Client_manage_list[ID_transverse].client_ID != -1){
+					if(serving_client_id == ID_transverse ){
+						cout <<Client_manage_list[ID_transverse].client_ID <<"\t"<< Client_manage_list[ID_transverse].client_name <<"\t" <<Client_manage_list[ID_transverse].IP <<":"<<Client_manage_list[ID_transverse].port  << "\t<- me" <<endl;
 					}else{
-						cout <<Client_manage_list[j].client_ID <<"\t"<< Client_manage_list[j].client_name <<"\t" << Client_manage_list[j].IP <<":"<<Client_manage_list[j].port << endl;
+						cout <<Client_manage_list[ID_transverse].client_ID <<"\t"<< Client_manage_list[ID_transverse].client_name <<"\t" << Client_manage_list[ID_transverse].IP <<":"<<Client_manage_list[ID_transverse].port << endl;
 					}
 				}
 			}
@@ -331,54 +329,39 @@ void parse_cmd(stringstream &sscmd){
 		}
 		
 		if(argv_table.at(0) == "name" ){
-			for(int  j= 0; j <CLIENT_LIMIT; j++){
-				if(Client_manage_list[j].client_ID != -1){
-					if(Client_manage_list[j].holding_service == true){
-						Client_manage_list[j].change_name(argv_table.at(1).c_str());
-						//strncpy(Client_manage_list[j].client_name, argv_table.at(1).c_str(), argv_table.at(1).length()  );
-						Client_manage_list[j].holding_service = false;
-					}
-				}
-			}
+			//Client_manage_list[j].change_name(argv_table.at(1).c_str());
+			memset(Client_manage_list[serving_client_id].client_name, '\0', CLIENT_NAME_SIZE*sizeof(char) );
+			strncpy(Client_manage_list[serving_client_id].client_name, argv_table.at(1).c_str(), argv_table.at(1).length()  );
 			break;		//not sure if there would be a bug/
 		}
 		
 		if(argv_table.at(0) == "yell" ){
-			for(int  j= 0; j <CLIENT_LIMIT; j++){
-				if(Client_manage_list[j].client_ID != -1){
-					if(Client_manage_list[j].holding_service == true){
-						Client_manage_list[j].content_buffer = "";
-						for(vector<string>::iterator it = argv_table.begin()+1; it < argv_table.end(); ++it){
-							Client_manage_list[j].content_buffer += " " +*it;
-						}
-						Client_manage_list[j].content_buffer += "\n";
-						broadcast(Client_manage_list[j].client_ID, MEMBER_YELL);
-						Client_manage_list[j].holding_service = false;
-					}
-				}
+			Client_manage_list[serving_client_id].content_buffer = "";
+			for(vector<string>::iterator it = argv_table.begin()+1; it < argv_table.end(); ++it){
+				Client_manage_list[serving_client_id].content_buffer += " " +*it;
 			}
+			Client_manage_list[serving_client_id].content_buffer += "\n";
+			
+	
+			broadcast(Client_manage_list[serving_client_id].client_ID, MEMBER_YELL);
 			break;		//not sure if there would be a bug/
 		}				
 
 		if(argv_table.at(0) == "tell" ){
-			for(int  j= 0; j <CLIENT_LIMIT; j++){
-				if(Client_manage_list[j].client_ID != -1){
-					if(Client_manage_list[j].holding_service == true){
-						Client_manage_list[j].content_buffer = "*** ";
-						Client_manage_list[j].content_buffer += Client_manage_list[j].client_name;
-						Client_manage_list[j].content_buffer += " told you";
-						Client_manage_list[j].content_buffer += " ***: ";
-						for(vector<string>::iterator it = argv_table.begin()+2; it < argv_table.end(); ++it){
-							Client_manage_list[j].content_buffer +=  " "+ *it;
-						}
-						Client_manage_list[j].content_buffer += "\n";
-						send(Client_manage_list[atoi( argv_table.at(1).c_str() ) ].client_fd, 
-								Client_manage_list[j].content_buffer.c_str(),
-								Client_manage_list[j].content_buffer.length(), 0);
-						Client_manage_list[j].holding_service = false;
-					}
-				}
+
+			Client_manage_list[serving_client_id].content_buffer = "*** ";
+			Client_manage_list[serving_client_id].content_buffer += Client_manage_list[serving_client_id].client_name;
+			Client_manage_list[serving_client_id].content_buffer += " told you";
+			Client_manage_list[serving_client_id].content_buffer += " ***: ";
+			for(vector<string>::iterator it = argv_table.begin()+2; it < argv_table.end(); ++it){
+				Client_manage_list[serving_client_id].content_buffer +=  " "+ *it;
 			}
+			Client_manage_list[serving_client_id].content_buffer += "\n";
+			
+			
+			send(Client_manage_list[atoi( argv_table.at(1).c_str() ) ].client_fd, 
+					Client_manage_list[serving_client_id].content_buffer.c_str(),
+					Client_manage_list[serving_client_id].content_buffer.length(), 0);
 			break;		//not sure if there would be a bug/
 		}		
 		//===============ChatRoom cmd  end================
@@ -392,13 +375,7 @@ void parse_cmd(stringstream &sscmd){
 		case '|':		
 			 //may not creat a pipe, need to check if target the same as previous process. 
 			//if so, store current_numPipe_at   in global vector.
-			for(int  j= 0; j <CLIENT_LIMIT; j++){
-				if(Client_manage_list[j].client_ID != -1){
-					if(Client_manage_list[j].holding_service == true){
-						current_pipe_record.client_ID = Client_manage_list[j].client_ID;
-					}
-				}
-			}
+			current_pipe_record.client_ID = serving_client_id;
 			pipe_flag = true;
 			if( isdigit( sign_number[1]) ){			//don't pop sign, in case of '|' at the end of cmd.
 				sign_number = sign_number.substr(1); //skip the first charactor.	
@@ -426,13 +403,7 @@ void parse_cmd(stringstream &sscmd){
 		case '!':
 			//pratically the same as mentioned ahead.
 			// creat a pipe and numbPipe_at number. stored in global vector.	
-			for(int  j= 0; j <CLIENT_LIMIT; j++){
-				if(Client_manage_list[j].client_ID != -1){
-					if(Client_manage_list[j].holding_service == true){
-						current_pipe_record.client_ID = Client_manage_list[j].client_ID;
-					}
-				}
-			}
+			current_pipe_record.client_ID = serving_client_id;
 			pipe_flag = true;
 			shockMarckflag = true;
 			if( isdigit( sign_number[1]) ){			//don't pop sign, in case of '|' at the end of cmd.
@@ -453,19 +424,13 @@ void parse_cmd(stringstream &sscmd){
 		int target_flag = false;
 		int pop_out_index = -1;
 		for(int i = 0; i< pipe_vector.size(); i++){
-			for(int  j= 0; j <CLIENT_LIMIT; j++){
-				if(Client_manage_list[j].client_ID != -1){
-					if(Client_manage_list[j].holding_service == true){	//find the client server is serving.
-						if(  (pipe_vector[i].client_ID == j)   &&    pipe_vector[i].get_count() == 0    ){
-							target_flag = true;
-							pop_out_index = i;
-							newProcessIn = pipe_vector[i].get_read();
-							pipe_reached_target = pipe_vector[i];
-							//write to pipe which arrives target will be useless. it'll be closed in both child and parent process.
-							close(pipe_vector[i].get_write() );
-						}
-					}
-				}
+			if(  (pipe_vector[i].client_ID == serving_client_id)   &&    pipe_vector[i].get_count() == 0    ){
+				target_flag = true;
+				pop_out_index = i;
+				newProcessIn = pipe_vector[i].get_read();
+				pipe_reached_target = pipe_vector[i];
+				//write to pipe which arrives target will be useless. it'll be closed in both child and parent process.
+				close(pipe_vector[i].get_write() );
 			}
 			//can not decrease vector here. itll influence following Pioneer part.
 		}
@@ -478,17 +443,11 @@ void parse_cmd(stringstream &sscmd){
 		int isPioneer = true;
 		if(pipe_flag == true){
 			for(int i = 0; i< pipe_vector.size(); i++){
-				for(int  j= 0; j <CLIENT_LIMIT; j++){
-					if(Client_manage_list[j].client_ID != -1){
-						if(Client_manage_list[j].holding_service == true){			//find the client server is serving.
-							if( (pipe_vector[i].client_ID == j) && (current_pipe_record.get_count() == pipe_vector[i].get_count() )   ){
-								newProcessOut = pipe_vector[i].get_write();
-								isPioneer = false;
-								if(shockMarckflag == true){
-									newProcessErr = pipe_vector[i].get_write();
-								}
-							}
-						}
+				if( (pipe_vector[i].client_ID == serving_client_id) && (current_pipe_record.get_count() == pipe_vector[i].get_count() )   ){
+					newProcessOut = pipe_vector[i].get_write();
+					isPioneer = false;
+					if(shockMarckflag == true){
+						newProcessErr = pipe_vector[i].get_write();
 					}
 				}
 			}
@@ -503,7 +462,6 @@ void parse_cmd(stringstream &sscmd){
 		} 
 		pid_t pid;
 		while ( (pid = fork()) < 0){
-			usleep(100);
 		}
 		if( pid == 0){	 											// child
 
@@ -534,19 +492,15 @@ void parse_cmd(stringstream &sscmd){
 				fprintf(stderr,"Unknown command: [%s].\n",pargv[0]);
 				//unknown_cmd = true; //unknown command still not work. if "ls | cd", pipe still remain in the npshell. 
 			}
+			
 			exit(-1);
 
 			
 		} else if(pid >0 ){			//parent
-			
 			signal(SIGCHLD, childHandler);
 			for(int i = 0; i< pipe_vector.size(); i++){
-				for(int  j= 0; j <CLIENT_LIMIT; j++){
-					if(Client_manage_list[j].client_ID != -1){
-						if(Client_manage_list[j].holding_service == true){			//find the client that server is serving.
-							pipe_vector[i].count_decrease();
-						}
-					}
+				if( pipe_vector[i].client_ID == serving_client_id ){			
+					pipe_vector[i].count_decrease();
 				}
 			}
 			//cout << "yo ho~~" << endl;
