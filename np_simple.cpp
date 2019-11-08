@@ -63,13 +63,13 @@ int main(){
     string cmd;
 	char input_buffer[1024]= {0};
 	string output_buffer="% ";
-
+	int socket_fd =0;
+	int client_fd = 0;
 	socket_fd = socket(AF_INET, SOCK_STREAM, 0);
 	if (socket_fd == -1){
         cout <<"Fail to create a socket." << endl;
     }
-	int socket_fd =0;
-	int client_fd = 0;
+
 	struct sockaddr_in serverInfo,clientInfo;
 	socklen_t  addrlen = sizeof(clientInfo);
 	bzero(&serverInfo,sizeof(serverInfo));  //initiialize server info.
