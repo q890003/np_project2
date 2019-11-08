@@ -37,7 +37,7 @@ char prompt[] = "% ";
 //=======parsing======
 void childHandler(int);
 void convert_argv_to_consntchar(const char, vector<string> );
-void parse_cmd(int, stringstream &);
+int parse_cmd(int, stringstream &);
 bool special_cmd(stringstream&);
 bool shell_exit = false;
 vector<string> retrieve_argv(stringstream&);
@@ -69,7 +69,9 @@ class Pipe_class{
 	}
 		int pfd[2];
 		int numPipe_count;
-		int client_ID;
+		int client_ID;		//a kind of pipe for private user use.
+		int sender;		//a pipe between user.
+		int receiver;
 };
 class Client_state{
 	public:
@@ -287,7 +289,7 @@ void convert_argv_to_consntchar(const char *argv[], vector<string> &argv_table) 
 	}
 	argv[argv_table.size()] = NULL;
 }
-void parse_cmd(int serving_client_id, stringstream &sscmd){
+int parse_cmd(int serving_client_id, stringstream &sscmd){
 	bool pipe_flag;	
 	bool pipe_create_flag;
 	bool shockMarckflag;
@@ -309,7 +311,7 @@ void parse_cmd(int serving_client_id, stringstream &sscmd){
 		target_flag = false;
 		unknown_cmd = false;
 		
-		vector<string> argv_table = retrieve_argv(sscmd);   // parse out cmd before sign |!>
+		vector<string> argv_table = retrieve_argv(sscmd);   // parse out cmd before sign |!><
 		if (argv_table.empty()){
 			break;
 		}
@@ -415,9 +417,51 @@ void parse_cmd(int serving_client_id, stringstream &sscmd){
 			break;
 		case '>':
 			file_flag = true;
-			string filename;
-			sscmd >> filename;
-			newProcessOut = open(filename.c_str(), O_RDWR | O_CREAT | O_TRUNC , 00777);
+			if( isdigit( sign_number[1]) ){
+				sign_number = sign_number.substr(1); //skip the first charactor.	
+				replace(sign_number.begin(), sign_number.end(), '+', ' ');
+				stringstream numb(sign_number);
+				while (numb >> test){
+					pipnumber += test;
+				}
+				current_pipe_record.client_ID = pipnumber;
+				current_pipe_record.sender = serving_client_id;
+				current_pipe_record.receiver = pipnumber;
+				current_pipe_record.creat_pipe();
+				pipe_vector.push_back( current_pipe_record );
+				newProcessOut = current_pipe_record.get_write();
+				newProcessErr = current_pipe_record.get_write();
+				cout << "send out " <<endl;
+			}else{
+				string filename;
+				sscmd >> filename;
+				newProcessOut = open(filename.c_str(), O_RDWR | O_CREAT | O_TRUNC , 00777);
+			}
+			break;
+		case '<':
+			if( isdigit( sign_number[1]) ){
+				sign_number = sign_number.substr(1); //skip the first charactor.	
+				replace(sign_number.begin(), sign_number.end(), '+', ' ');
+				stringstream numb(sign_number);
+				while (numb >> test){
+					pipnumber += test;
+				}
+				cout << "receive from " << pipnumber<<endl;
+				for(int i = 0; i< pipe_vector.size(); i++){
+					if( (pipe_vector[i].client_ID == serving_client_id) && (pipe_vector[i].receiver == serving_client_id )   ){
+						cout << "sent from " << pipe_vector[i].sender<<endl;
+						char get_file[1024] = {0};
+						read(pipe_vector[i].get_read(),get_file, sizeof(get_file) );
+						//cout << get_file << endl;
+						send(Client_manage_list[serving_client_id].client_fd, get_file, sizeof(get_file),0);
+						close(pipe_vector[i].get_read());
+						close(pipe_vector[i].get_write());
+					}else{
+						cout << "*** Error: user #"<<pipnumber <<  "does not exist yet. ***" << endl;
+					}
+				}
+			}
+			return 0;
 			break;
 		}
 		//if upcomming child process is target or not.
@@ -551,7 +595,7 @@ vector<string> retrieve_argv(stringstream &ss){
 		vector<string> argv;
 		string token;
 
-		while((ss >> ws) && !strchr("|!>", ss.peek()) && (ss >> token)  )
+		while((ss >> ws) && !strchr("|!><", ss.peek()) && (ss >> token)  )
 				argv.push_back(token);
 		return argv;
 }
