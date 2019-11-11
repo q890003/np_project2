@@ -96,6 +96,7 @@ class Client_state{
 			client_fd = -1;
 			client_ID = -1;
 			strncpy(client_name,"(no name)",strlen("(no name)") );
+			user_pipe_success = false;
 		}
 		void reset(){
 			client_fd = -1;
@@ -123,7 +124,7 @@ class Client_state{
 		unsigned short int port;									//not sure about port size.
 		int ID_from_sender;
 		int ID_to_reciever;
-
+		bool user_pipe_success;
 		//Pipe_class user_pipe;
 
 };
@@ -312,7 +313,7 @@ void broadcast(int ID_num, int action, char* msg){
 		case USER_PIPE_SENDER:
 			ss << "*** ";
 			ss << Client_manage_list[ID_num].client_name; ss << " (#"; ss << Client_manage_list[ID_num].get_charID(); ss << ") ";
-			ss << "just piped \'"; ss << msg; ss << " >"; ss << Client_manage_list[ID_num].ID_to_reciever ; ss << "\' to ";
+			ss << "just piped \'"; ss << msg; "\' to ";
 			ss << Client_manage_list[Client_manage_list[ID_num].ID_to_reciever].client_name; ss << " (#"; ss << Client_manage_list[Client_manage_list[ID_num].ID_to_reciever].get_charID();
 			ss << ") ***\n";
 			broadcast_content = ss.str();
@@ -324,8 +325,6 @@ void broadcast(int ID_num, int action, char* msg){
 			ss << Client_manage_list[ Client_manage_list[ID_num].ID_from_sender  ].client_name; ss << " (#"; ss << Client_manage_list[ Client_manage_list[ID_num].ID_from_sender ].get_charID();
 			ss << ") by \'";
 			ss << msg;
-			ss << " <";
-			ss << Client_manage_list[Client_manage_list[ID_num].ID_from_sender].get_charID();
 			ss << "\' ***\n";
 			broadcast_content = ss.str();
 			break;
@@ -373,11 +372,13 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 		file_flag	= false;
 		target_flag = false;
 		unknown_cmd = false;
-		
+		cout << " what's going on here" <<endl;
 		vector<string> argv_table = retrieve_argv(sscmd);   // parse out cmd before sign |!><
-		if (argv_table.empty()){
+		//!(Client_manage_list[serving_client_id].user_pipe_success)
+		if (argv_table.empty() && !(Client_manage_list[serving_client_id].user_pipe_success)  ){
 			break;
 		}
+		Client_manage_list[serving_client_id].user_pipe_success = false;
 		//===============ChatRoom cmd================
 		if(argv_table.at(0) == "who" ){
 			cout << "<ID>\t<nickname>\t<IP:port>\t<indicate me> "<<endl;
@@ -453,6 +454,7 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 		//char *pch;					 //version 2 which fucked me
 		int pipnumber = 0;
 		sscmd >> sign_number;
+		cout << "test times and current handling cmd is " << sign_number<<endl;
 		int test = 0;
 		switch(sign_number[0]){
 		case '|':		
@@ -499,7 +501,6 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 			break;
 		case '>':
 			if( isdigit( sign_number[1]) ){
-				char user_pipe_msg[1024] ={0};
 				create_user_pipe_flag = true;
 				sign_number = sign_number.substr(1); //skip the first charactor.	
 				replace(sign_number.begin(), sign_number.end(), '+', ' ');
@@ -541,12 +542,10 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 					pipe_vector.push_back( current_pipe_record );
 					newProcessOut = current_pipe_record.get_write();
 					newProcessErr = current_pipe_record.get_write();
-
-					for(vector<string>::iterator it = argv_table.begin(); it < argv_table.end(); ++it){
-						if(it != argv_table.begin())
-							strcat(user_pipe_msg, " ");
-						strcat(user_pipe_msg, (*it).c_str() );
-					}
+				
+					char user_pipe_msg[1024] ={0};
+					string tmp = sscmd.str();
+					strcpy(user_pipe_msg, tmp.c_str());
 					broadcast(serving_client_id, USER_PIPE_SENDER, user_pipe_msg);
 				}
 			}else{
@@ -586,6 +585,7 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 							((*it).sender == pipnumber) ){
 							user_pipe_reciever_flag = true;
 							Client_manage_list[serving_client_id].ID_from_sender = pipnumber;	//for braodcast msg.
+							Client_manage_list[serving_client_id].user_pipe_success = true;
 							current_pipe_record.client_ID = serving_client_id;
 							current_pipe_record.receiver = serving_client_id;
 							current_pipe_record.sender = pipnumber;
@@ -593,10 +593,12 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 							current_pipe_record.user_pipe_record = it;
 							current_pipe_record.set_read((*it).get_read());
 							current_pipe_record.set_write((*it).get_write());
-							newProcessIn = (*it).get_read();
+								newProcessIn = (*it).get_read();
+							
 							break;
 						}
 					}
+					//avoid pipe not exist
 					if(user_pipe_reciever_flag == false){
 						string err_msg = "** Error: the pipe #";
 						err_msg += Client_manage_list[pipnumber].get_charID();
@@ -607,11 +609,8 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 						return 0;
 					}
 					char user_pipe_msg[1024] = {0};
-					for(vector<string>::iterator it = argv_table.begin(); it < argv_table.end(); ++it){
-						if(it != argv_table.begin())
-						strcat(user_pipe_msg, " ");
-						strcat(user_pipe_msg, (*it).c_str() );
-					}
+					string tmp = sscmd.str();
+					strcpy(user_pipe_msg, tmp.c_str());
 					broadcast(serving_client_id, USER_PIPE_RECIEVER, user_pipe_msg);
 				}
 			}
@@ -766,10 +765,20 @@ vector<string> retrieve_argv(stringstream &ss){
 		vector<string> argv;
 		string token;
 		string special_symbol = ss.str();
-		string user_pipe_with_pipe;
 		size_t found = special_symbol.find("\'");
-		bool isMessage = found!=string::npos;			//if it's message, ignore symbol |!><
-		while((ss >> ws) && ( !strchr("|!><", ss.peek()) || isMessage) && (ss >> token)  )  //if front is false, ss>>token won't work
+		//string user_pipe_with_pipe = ss.str();
+		//strcpy(user_pipe_with_pipe, ss.str() );
+		//char* substr = NULL;
+		//bool user_pipe_advance = false;
+		cout << "here? ?" << endl;
+		bool isMessage = (found!=string::npos);			//if it's message, ignore symbol |!><
+		while((ss >> ws) && ( !strchr("|!><", ss.peek()) || isMessage) && (ss >> token)  ){  //if front is false, ss>>token won't work
+				//user_pipe_advance = false;
+				cout << "out of range here?" << endl;
 				argv.push_back(token);
+				//if(strchr("|!>", ss.peek() )
+					//user_pipe_advance = true;
+					//在 < 確認有沒有 ｜ > 再更改 input output的 fd
+		}
 		return argv;
 }
