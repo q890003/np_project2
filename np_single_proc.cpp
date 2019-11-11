@@ -31,8 +31,9 @@ using namespace std;
 
 //===Chatting Room====
 void broadcast(int, int, char*);  		//(int client_ID, int Action)
-char Welcome[] = "***************************************\n** Welcome to the information server **\n***************************************\n";
+char Welcome[] = "***************************************\n** Welcome to the information server. **\n***************************************\n";
 char prompt[] = "% ";
+bool isUserExist(int);
 //==================
 
 
@@ -64,7 +65,7 @@ class Pipe_class{
 	int set_write(int fd){
 		pfd[1] = fd;
 	}
-	int get_Upipe_raed(){
+	int get_Upipe_read(){
 		return user_pipe_pfd[0];
 	}
 	int get_Upipe_write(){
@@ -105,9 +106,8 @@ class Pipe_class{
 		int pfd[2];
 		int user_pipe_pfd[2];
 		int numPipe_count;
-		int client_ID;		//a kind of pipe for private user use.
+		int client_ID;		//a kind of pipe for private user use. it can also be reciever ID
 		int sender;		//a pipe between user.
-		int receiver;
 		bool isUserPipe;
 };
 class Client_state{
@@ -116,7 +116,10 @@ class Client_state{
 			client_fd = -1;
 			client_ID = -1;
 			strncpy(client_name,"(no name)",strlen("(no name)") );
-			user_pipe_success = false;
+			memset( IP, 0, INET_ADDRSTRLEN*sizeof(char) );
+			port = 0;
+			ID_from_sender = -1;
+			ID_to_reciever = -1;
 		}
 		void reset(){
 			client_fd = -1;
@@ -127,6 +130,8 @@ class Client_state{
 			port = 0;
 			ID_from_sender = -1;
 			ID_to_reciever = -1;
+			//memset( enviroment_variable, '\0', 512*sizeof(char) );
+			//strncpy(enviroment_variable, "PATH", "bin:.", strlen(newname) );
 		};
 		void change_name(const char* newname){
 			memset( client_name, '\0', CLIENT_NAME_SIZE*sizeof(char) );
@@ -142,13 +147,11 @@ class Client_state{
 		char client_name[CLIENT_NAME_SIZE];
 		char IP[INET_ADDRSTRLEN];
 		unsigned short int port;									//not sure about port size.
-		int ID_from_sender;
+		int ID_from_sender;				// //for broadcasting msg.
 		int ID_to_reciever;
-		bool user_pipe_success;
-		//Pipe_class user_pipe;
-
+		//char enviroment_variable[512];
 };
-vector<Pipe_class> pipe_vector;					//need to revise//////////////////////////////////////////////////
+vector<Pipe_class> pipe_vector;				
 Client_state Client_manage_list[CLIENT_LIMIT] ;
 
 int main(int argc, char* argv[]){
@@ -226,15 +229,13 @@ int main(int argc, char* argv[]){
 						
 						for(int j= 0; j <CLIENT_LIMIT; j++){			
 							if(Client_manage_list[j].client_ID  ==  -1 ){
-								//char charID[25];
 								Client_manage_list[j].client_ID =  j;
 								Client_manage_list[j].client_fd = newfd;
-								//sprintf(charID,"%d",j);
-								//Client_manage_list[j].client_name += charID;
+
 								inet_ntop(AF_INET, &(clientSockInfo.sin_addr), Client_manage_list[j].IP, INET_ADDRSTRLEN);
 								Client_manage_list[j].port = clientSockInfo.sin_port;
 								broadcast(Client_manage_list[j].client_ID, MEMBER_JOIN, NULL);
-								cout << Client_manage_list[j].IP << " is connect" << endl;
+								cout << Client_manage_list[j].IP << " is connect" << endl;				//for server use.
 								break;
 							}
 						}
@@ -283,14 +284,7 @@ int main(int argc, char* argv[]){
 							}else if(isChat_cmd(serving_client_id,sscmd) ){
 								//no op if not chat_cmd continue
 							}else{
-								/*dup2(serving_to_client_fd, STDIN_FILENO);
-								dup2(serving_to_client_fd, STDOUT_FILENO);
-								dup2(serving_to_client_fd, STDERR_FILENO);
-								*/parse_cmd(serving_client_id, sscmd);
-								/*dup2(SERVER_STDIN_FD, STDIN_FILENO);
-								dup2(SERVER_STDOUT_FD, STDOUT_FILENO);
-								dup2(SERVER_STDERR_FD, STDERR_FILENO);
-								*/
+								parse_cmd(serving_client_id, sscmd);
 							}
 						}
 						dup2(SERVER_STDIN_FD, STDIN_FILENO);
@@ -305,7 +299,14 @@ int main(int argc, char* argv[]){
 	}
 	return 0;
 }
-
+bool isUserExist(int lookingID){
+	for(int  ID_transverse= 0; ID_transverse <CLIENT_LIMIT; ID_transverse++){
+		if(Client_manage_list[ID_transverse].client_ID == lookingID ){
+			return true;
+		}
+	}
+	return false;
+}
 void broadcast(int ID_num, int action, char* msg){
 	stringstream ss;
 	string broadcast_content;
@@ -323,37 +324,25 @@ void broadcast(int ID_num, int action, char* msg){
 			broadcast_content = ss.str();
 			break;
 		case NAME_CHANGE:
-			ss << "** User from ";
-			ss << Client_manage_list[ID_num].IP;
-			ss << ":";
-			ss << Client_manage_list[ID_num].port;
-			ss << " is named \'";
-			ss << Client_manage_list[ID_num].client_name;
-			ss << "\'. ***\n";
+			ss << "** User from "; ss << Client_manage_list[ID_num].IP; ss << ":"; ss << Client_manage_list[ID_num].port;
+			ss << " is named \'"  ; ss << Client_manage_list[ID_num].client_name;	 ss << "\'. ***\n";
 			broadcast_content = ss.str();
 			break;
 		case MEMBER_YELL:
-			ss << "*** " << Client_manage_list[ID_num].client_name;
-			ss << " yelled ***:";
-			ss << msg;
+			ss << "*** " << Client_manage_list[ID_num].client_name;  ss << " yelled ***:";  ss << msg;
 			broadcast_content = ss.str();
 			break;
 		case USER_PIPE_SENDER:
-			ss << "*** ";
-			ss << Client_manage_list[ID_num].client_name; ss << " (#"; ss << Client_manage_list[ID_num].get_charID(); ss << ") ";
+			ss << "*** "; ss << Client_manage_list[ID_num].client_name; ss << " (#"; ss << Client_manage_list[ID_num].get_charID(); ss << ") ";
 			ss << "just piped \'"; ss << msg; ss << "\' to ";
 			ss << Client_manage_list[Client_manage_list[ID_num].ID_to_reciever].client_name; ss << " (#"; ss << Client_manage_list[Client_manage_list[ID_num].ID_to_reciever].get_charID();
 			ss << ") ***\n";
 			broadcast_content = ss.str();
 			break;
 		case USER_PIPE_RECIEVER:
-			ss << "*** ";
-			ss << Client_manage_list[ID_num].client_name; ss << " (#"; ss << Client_manage_list[ID_num].get_charID(); ss << ") ";
-			ss << "just received from ";
-			ss << Client_manage_list[ Client_manage_list[ID_num].ID_from_sender  ].client_name; ss << " (#"; ss << Client_manage_list[ Client_manage_list[ID_num].ID_from_sender ].get_charID();
-			ss << ") by \'";
-			ss << msg;
-			ss << "\' ***\n";
+			ss << "*** "; ss << Client_manage_list[ID_num].client_name; ss << " (#"; ss << Client_manage_list[ID_num].get_charID(); ss << ") ";
+			ss << "just received from "; ss << Client_manage_list[ Client_manage_list[ID_num].ID_from_sender  ].client_name; ss << " (#"; ss << Client_manage_list[ Client_manage_list[ID_num].ID_from_sender ].get_charID();
+			ss << ") by \'";  ss << msg;  ss << "\' ***\n";
 			broadcast_content = ss.str();
 			break;
 	}
@@ -396,8 +385,7 @@ bool isChat_cmd(int serving_client_id, stringstream &sscmd){
 			}
 		}
 		if(check_name_existence == true){
-			string name_exist = "*** User \'";
-			name_exist += argv_table.at(1) + "\' already exists. ***";
+			string name_exist = "*** User \'";  name_exist += argv_table.at(1) + "\' already exists. ***";
 			cout << name_exist << endl;
 		}else{
 			memset(Client_manage_list[serving_client_id].client_name, '\0', CLIENT_NAME_SIZE*sizeof(char) );
@@ -418,13 +406,13 @@ bool isChat_cmd(int serving_client_id, stringstream &sscmd){
 	}				
 
 	if(argv_table.at(0) == "tell" ){
-		bool isUserExist = false;
+		/*bool isUserExist = false;
 		for(int  ID_transverse= 0; ID_transverse <CLIENT_LIMIT; ID_transverse++){
 			if(Client_manage_list[ID_transverse].client_ID == atoi( argv_table.at(1).c_str() ) ){
 				isUserExist = true;
 			}
-		}
-		if(isUserExist == false){
+		}*/
+		if(isUserExist(   atoi( argv_table.at(1).c_str()  )      )     ){
 			cout << "*** Error: user #"<< argv_table.at(1) << " does not exist yet. ***" << endl;
 			return true;
 		}
@@ -458,17 +446,15 @@ void convert_argv_to_consntchar(const char *argv[], vector<string> &argv_table) 
 int parse_cmd(int serving_client_id, stringstream &sscmd){
 	bool pipe_flag;	
 	bool create_user_pipe_flag;
-	bool user_pipe_reciever_flag;
-	bool reuse_user_pipe_flag = false;
-	//bool pipe_create_flag;
+	bool isRecieveing_Upipe;
 	bool shockMarckflag;
 	bool file_flag;
 	bool target_flag;
-	bool unknown_cmd = false;     //unknown command still not work. if "ls | cd", pipe still remain in the npshell. 
+	//bool unknown_cmd = false;     //unknown command still not work. if "ls | cd", pipe still remain in the npshell. 
 	Pipe_class current_pipe_record;
 	Pipe_class pipe_reached_target;
 
-	while(!sscmd.eof() && !unknown_cmd){      			//check sstream of cmdline is not eof.
+	while(!sscmd.eof() ){      			//check sstream of cmdline is not eof.
 		//unknown command still not work. if "ls | cd", pipe still remain in the npshell. 
 		int newProcessIn = STDIN_FILENO;   //shell process's fd 0,1,2 are client's, who gives cmd, std in/out/err.
  		int newProcessOut = STDOUT_FILENO;
@@ -476,39 +462,89 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 		
 		pipe_flag = false;
 		create_user_pipe_flag = false;
-		user_pipe_reciever_flag = false;
-		//reuse_user_pipe_flag = false;
-		//pipe_create_flag = false;
+		isRecieveing_Upipe = false;
 		shockMarckflag = false;
 		file_flag	= false;
 		target_flag = false;
-		//unknown_cmd = false;
 		vector<string> argv_table = retrieve_argv(sscmd);   // parse out cmd before sign |!><
-		//!(Client_manage_list[serving_client_id].user_pipe_success)
-		if (argv_table.empty() && !(Client_manage_list[serving_client_id].user_pipe_success)  ){
+		if (argv_table.empty()   ){
 			break;
 		}
-		Client_manage_list[serving_client_id].user_pipe_success = false;
-		//need some extra notation.
+
 		string sign_number;
-		//char *pch;					 //version 2 which fucked me
-		int pipnumber = 0;
 		sscmd >> sign_number;
-		switch(sign_number[0]){
-			case '|':		
-				//may not creat a pipe, need to check if target the same as previous process. 
-				//if so, store current_numPipe_at   in global vector.
+		if( (sscmd>>ws)  &&    strchr("<", sscmd.peek() )  ){	// chekc if < is after >, if so, push '<ID' into argv.
+			string peek_cmd;
+			sscmd >> peek_cmd;
+			argv_table.push_back(peek_cmd);
+		}
+
+		//check if there is <, recieving userpipe
+		if(argv_table.size() >=2){
+			vector<string>::iterator peek_recieve = argv_table.end()-1;	
+			if((*peek_recieve)[0] == '<'){
+				if( isdigit( (*peek_recieve)[1]) ){
+					string sign_number = (*peek_recieve).substr(1); //skip the first charactor.	
+					replace(sign_number.begin(), sign_number.end(), '+', ' ');
+					stringstream numb(sign_number);
+					int pipenumber = 0;
+					int temp;
+					while (numb >> temp){
+						pipenumber += temp;
+					}
+					//check if user exist or not.
+					if(isUserExist(pipenumber) == false){	 //if not exist, return 0;
+						cout << "*** Error: user #" << pipenumber << " does not exist yet. ***" << endl;
+						return 0;
+					}
+					//looking for user pipe.
+					for(vector<Pipe_class>::iterator it = pipe_vector.begin(); it< pipe_vector.end(); ++it){
+						if( ((*it).isUserPipe == true ) && ((*it).client_ID == serving_client_id) && ((*it).sender == pipenumber) ){
+							cout << "argv_table size " << argv_table.size() << endl;
+							argv_table.pop_back();
+							isRecieveing_Upipe = true;
+							Client_manage_list[serving_client_id].ID_from_sender = pipenumber;	//for braodcast msg.
+							current_pipe_record = (*it);			//get user_pipe fd, ID, senderID, reciever ID
+							//cout << "read, write" << current_pipe_record.get_Upipe_read() << ", " << current_pipe_record.get_Upipe_write() << endl;
+							//cout << "pipe_vector size  before get: " << pipe_vector.size() << endl;
+							pipe_vector.erase(it);
+							newProcessIn = current_pipe_record.get_Upipe_read();
+							break;
+						}
+					}
+					//avoid pipe not exist. if true(recieve success), then broadcast.  if false ,return 0;
+					if(isRecieveing_Upipe == false){
+						string err_msg = "** Error: the pipe #"; err_msg += Client_manage_list[pipenumber].get_charID();
+						err_msg += "->#"; 								err_msg += Client_manage_list[serving_client_id].get_charID();
+						err_msg += " does not exist yet. ***";
+						cout << err_msg << endl;
+						return 0;
+					}
+					char user_pipe_msg[1024] = {0};
+					string tmp = sscmd.str();
+					strcpy(user_pipe_msg, tmp.c_str());
+					broadcast(serving_client_id, USER_PIPE_RECIEVER, user_pipe_msg);
+					
+				}
+			}
+		}
+	
+
+		if(sign_number[0] == '|'){
 				cout << "I am piping " << endl;
 				current_pipe_record.client_ID = serving_client_id;
+				
 				pipe_flag = true;
 				if( isdigit( sign_number[1]) ){			//don't pop sign, in case of '|' at the end of cmd.
 					sign_number = sign_number.substr(1); //skip the first charactor.	
 					replace(sign_number.begin(), sign_number.end(), '+', ' ');
 					stringstream numb(sign_number);
 					int test = 0;
+					int pipenumber = 0;
 					while (numb >> test){
-						pipnumber += test;
+						pipenumber += test;
 					}
+					//char *pch;					 //version 2 which fucked me
 					/*
 					//version 2 which fucked me 
 					char temp[sign_number.length()+1];
@@ -516,19 +552,19 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 					pch = strtok(temp,"+");
 					while(pch != NULL){
 						test = atoi(pch);
-						pipnumber += test;
+						pipenumber += test;
 						pch = strtok(NULL,"+");
 					}
 					*/
-					current_pipe_record.set_numPipe_count(pipnumber);
+					current_pipe_record.set_numPipe_count(pipenumber);
 				} else {
 					current_pipe_record.set_numPipe_count(1);
 				}
-				break;
-			case '!':
+		}
+		if(sign_number[0] =='!'){
 				//pratically the same as mentioned ahead.
-				// creat a pipe and numbPipe_at number. stored in global vector.	
 				current_pipe_record.client_ID = serving_client_id;
+				//cout << "not shock" << endl;
 				pipe_flag = true;
 				shockMarckflag = true;
 				if( isdigit( sign_number[1]) ){			//don't pop sign, in case of '|' at the end of cmd.
@@ -537,230 +573,86 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 				} else {
 					current_pipe_record.set_numPipe_count(1);
 				}
-				break;
-			case '>':
+		}
+		int Upipe_read_tmp;   //L 608
+		int Upipe_write_tmp;	// L609
+		bool double_Upipe = false;
+		if(sign_number[0] =='>'){
 				if( isdigit( sign_number[1]) ){
 					sign_number = sign_number.substr(1); //skip the first charactor.	
 					replace(sign_number.begin(), sign_number.end(), '+', ' ');
 					stringstream numb(sign_number);
 					int test;
+					int pipenumber = 0;
 					while (numb >> test){
-						pipnumber += test;
+						pipenumber += test;
 					}  
-					bool isUserExist = false;
-					for(int  ID_transverse= 0; ID_transverse <CLIENT_LIMIT; ID_transverse++){
-						if(Client_manage_list[ID_transverse].client_ID == pipnumber ){
-							isUserExist = true;
-						}
-					}
-					if(isUserExist == false){
-						cout << "*** Error: user #"<<pipnumber << " does not exist yet. ***" << endl;
+					if(isUserExist(pipenumber) == false){
+						cout << "*** Error: user #"<<pipenumber << " does not exist yet. ***" << endl;
 						return 0;
-					}else{
-						create_user_pipe_flag = true;
-						string err_msg;
-						for(vector<Pipe_class>::iterator it = pipe_vector.begin(); it< pipe_vector.end(); ++it){	//check if user_pipe exist.
-							if( ((*it).isUserPipe == true ) && 
-								((*it).client_ID == pipnumber) &&
-								((*it).receiver == pipnumber ) &&
-								((*it).sender == serving_client_id) ){
-									err_msg += "*** Error: the pipe #";
-									err_msg += Client_manage_list[serving_client_id].get_charID();
-									err_msg += "->#";
-									err_msg += Client_manage_list[pipnumber].get_charID();
-									err_msg += " already exists. ***";
-									cout << err_msg << endl;
-									return 0;
-								}
-						}
-						//user pipe is avaliable to create.
-						Client_manage_list[serving_client_id].ID_to_reciever = pipnumber; //for broadcasting msg.
-						current_pipe_record.isUserPipe = true;
-						
-						current_pipe_record.client_ID = pipnumber;
-						current_pipe_record.sender = serving_client_id;
-						current_pipe_record.receiver = pipnumber;
-						current_pipe_record.creat_Upipe();
-						pipe_vector.push_back( current_pipe_record );
-						newProcessOut = current_pipe_record.get_Upipe_write();
-						newProcessErr = current_pipe_record.get_Upipe_write();
-						char user_pipe_msg[1024] ={0};
-						string tmp = sscmd.str();
-						strcpy(user_pipe_msg, tmp.c_str());
-						broadcast(serving_client_id, USER_PIPE_SENDER, user_pipe_msg);
 					}
+					string err_msg;
+					for(vector<Pipe_class>::iterator it = pipe_vector.begin(); it< pipe_vector.end(); ++it){	//check if user_pipe exist.
+						if( ((*it).isUserPipe == true ) && ((*it).client_ID == pipenumber)  && ((*it).sender == serving_client_id) ){
+								err_msg += "*** Error: the pipe #";
+								err_msg += Client_manage_list[serving_client_id].get_charID();  err_msg += "->#";  err_msg += Client_manage_list[pipenumber].get_charID();
+								err_msg += " already exists. ***";
+								cout << err_msg << endl;
+								return 0;
+							}
+					}
+					//user pipe is avaliable to create.
+					Client_manage_list[serving_client_id].ID_to_reciever = pipenumber; //for broadcasting msg.
+					create_user_pipe_flag = true;
+					
+					if(isRecieveing_Upipe == true){
+						double_Upipe = true;
+						Upipe_read_tmp = current_pipe_record.get_Upipe_read();
+						Upipe_write_tmp =current_pipe_record.get_Upipe_write();
+					}
+					current_pipe_record.isUserPipe = true;
+					current_pipe_record.client_ID = pipenumber;				// clientID  is the same as reciever.
+					current_pipe_record.sender = serving_client_id;
+					cout << "getting in L607 " << endl;
+					current_pipe_record.creat_Upipe();
+					cout << "read, write" << current_pipe_record.get_Upipe_read() << ", " << current_pipe_record.get_Upipe_write() << endl;
+					current_pipe_record.set_numPipe_count(999);    
+					pipe_vector.push_back( current_pipe_record );
+					
+					newProcessOut = current_pipe_record.get_Upipe_write();
+					newProcessErr = current_pipe_record.get_Upipe_write();
+					
+					//broadcast
+					char user_pipe_msg[1024] ={0};
+					string tmp = sscmd.str();
+					strcpy(user_pipe_msg, tmp.c_str());
+					broadcast(serving_client_id, USER_PIPE_SENDER, user_pipe_msg);
+					
 				}else{
 					file_flag = true;
 					string filename;
 					sscmd >> filename;
 					newProcessOut = open(filename.c_str(), O_RDWR | O_CREAT | O_TRUNC , 00777);
 				}
-				break;
-			case '<':
-				if( isdigit( sign_number[1]) ){
-					sign_number = sign_number.substr(1); //skip the first charactor.	
-					replace(sign_number.begin(), sign_number.end(), '+', ' ');
-					stringstream numb(sign_number);
-					int test;
-					while (numb >> test){
-						pipnumber += test;
-					}
-					
-					//check if user exist or not.
-					bool isUserExist = false;
-					for(int  ID_transverse= 0; ID_transverse <CLIENT_LIMIT; ID_transverse++){
-						if(Client_manage_list[ID_transverse].client_ID == pipnumber){
-							isUserExist = true;
-						}
-					}
-					if(isUserExist == false){
-						cout << "*** Error: user #" << pipnumber << " does not exist yet. ***" << endl;
-						return 0;
-					}else{
-						//brocast message.
-						user_pipe_reciever_flag = false;				// check if receiver success
-						reuse_user_pipe_flag = false;
-						for(vector<Pipe_class>::iterator it = pipe_vector.begin(); it< pipe_vector.end(); ++it){
-							if( ((*it).isUserPipe == true ) && 
-								((*it).client_ID == serving_client_id) &&
-								((*it).receiver == serving_client_id ) &&
-								((*it).sender == pipnumber) ){
-								user_pipe_reciever_flag = true;
-								Client_manage_list[serving_client_id].ID_from_sender = pipnumber;	//for braodcast msg.
-								Client_manage_list[serving_client_id].user_pipe_success = true;	//
-								current_pipe_record = (*it);			//get user_pipe fd, ID, senderID, reciever ID
-								pipe_vector.erase(it);
-									cout << "find user_pipe" << endl;	
-
-								newProcessIn = current_pipe_record.get_Upipe_raed();
-								//current_pipe_record.set_Upipe_wried((*it).get_write());
-								//check if need to reuse user pipe or not.
-								if ( (sscmd>>ws) && (  strchr("|", sscmd.peek())  )   ) {
-									sscmd >> sign_number;
-									reuse_user_pipe_flag = true;
-									pipe_flag = true;
-									cout << "trying to create pipe. " << endl;					//passing Upipe msg to normal pipe. or normal print out
-									
-									
-									if( isdigit( sign_number[1]) ){			//caculate number of pipe |
-										sign_number = sign_number.substr(1); //skip the first charactor.	
-										replace(sign_number.begin(), sign_number.end(), '+', ' ');
-										stringstream numb(sign_number);
-										int test = 0;
-										while (numb >> test){
-											pipnumber += test;
-										}
-										current_pipe_record.set_numPipe_count(pipnumber);
-									}else {
-										current_pipe_record.set_numPipe_count(1);
-									}
-									//need one more read!!!!to read number cmd.
-								}
-								if ( (sscmd>>ws) && (  strchr(">", sscmd.peek())  )   ) {
-									sscmd >> sign_number;
-									reuse_user_pipe_flag = true;
-									pipe_flag = true;
-									cout << "trying to rediret to other people. " << endl;					//passing Upipe msg to normal pipe. or normal print out
-									
-									
-									if( isdigit( sign_number[1]) ){
-										sign_number = sign_number.substr(1); //skip the first charactor.	
-										replace(sign_number.begin(), sign_number.end(), '+', ' ');
-										stringstream numb(sign_number);
-										int test;
-										while (numb >> test){
-											pipnumber += test;
-										}  
-										bool isUserExist = false;
-										for(int  ID_transverse= 0; ID_transverse <CLIENT_LIMIT; ID_transverse++){
-											if(Client_manage_list[ID_transverse].client_ID == pipnumber ){
-												isUserExist = true;
-											}
-										}
-										if(isUserExist == false){
-											cout << "*** Error: user #"<<pipnumber << " does not exist yet. ***" << endl;
-											return 0;
-										}else{
-											create_user_pipe_flag = true;
-											string err_msg;
-											for(vector<Pipe_class>::iterator it = pipe_vector.begin(); it< pipe_vector.end(); ++it){	//check if user_pipe exist.
-												if( ((*it).isUserPipe == true ) && 
-													((*it).client_ID == pipnumber) &&
-													((*it).receiver == pipnumber ) &&
-													((*it).sender == serving_client_id) ){
-														err_msg += "*** Error: the pipe #";
-														err_msg += Client_manage_list[serving_client_id].get_charID();
-														err_msg += "->#";
-														err_msg += Client_manage_list[pipnumber].get_charID();
-														err_msg += " already exists. ***";
-														cout << err_msg << endl;
-														return 0;
-													}
-											}
-											//user pipe is avaliable to create.
-											Client_manage_list[serving_client_id].ID_to_reciever = pipnumber; //for broadcasting msg.
-											current_pipe_record.isUserPipe = true;
-											
-											current_pipe_record.client_ID = pipnumber;
-											current_pipe_record.sender = serving_client_id;
-											current_pipe_record.receiver = pipnumber;
-											current_pipe_record.creat_Upipe();
-											pipe_vector.push_back( current_pipe_record );
-											newProcessOut = current_pipe_record.get_Upipe_write();
-											newProcessErr = current_pipe_record.get_Upipe_write();
-											char user_pipe_msg[1024] ={0};
-											string tmp = sscmd.str();
-											strcpy(user_pipe_msg, tmp.c_str());
-											broadcast(serving_client_id, USER_PIPE_SENDER, user_pipe_msg);
-										}
-									}else{
-										file_flag = true;
-										string filename;
-										sscmd >> filename;
-										newProcessOut = open(filename.c_str(), O_RDWR | O_CREAT | O_TRUNC , 00777);
-									}
-								}
-								break;
-							}
-						}
-						//avoid pipe not exist. if true(recieve success), then broadcast
-						if(user_pipe_reciever_flag == false){
-							string err_msg = "** Error: the pipe #";
-							err_msg += Client_manage_list[pipnumber].get_charID();
-							err_msg += "->#";
-							err_msg += Client_manage_list[serving_client_id].get_charID();
-							err_msg += " does not exist yet. ***";
-							cout << err_msg << endl;
-							return 0;
-						}else{
-							char user_pipe_msg[1024] = {0};
-							string tmp = sscmd.str();
-							strcpy(user_pipe_msg, tmp.c_str());
-							broadcast(serving_client_id, USER_PIPE_RECIEVER, user_pipe_msg);
-						}
-					}
-						
-				
-				break;
-			
-				}
+				//break;
 		}
+		
 		cout << "pipe_vector size : " << pipe_vector.size() << endl;
 		
 		//if upcomming child process is target or not.
 		int target_flag = false;
-		int pop_out_index = -1;
-		for(int i = 0; i< pipe_vector.size(); i++){				//there would be only on input in a instruction. won't has ls | cat <0
-			if( (pipe_vector[i].client_ID == serving_client_id)&&
-			    (pipe_vector[i].get_count() == 0)&&
-				(pipe_vector[i].isUserPipe == false) ){
-					cout << " I am target" << endl;
+		int pop_out_index = -1;				//for releasig from pipe_vector
+		for(int i = 0; i< pipe_vector.size(); i++){				//there would be only on input in a instruction. won't be ls | cat <0
+			cout << "ID, isUserpipe, rfd, wfd, count " << pipe_vector[i].client_ID << ", " << pipe_vector[i].isUserPipe << ", " << endl;
+			cout << pipe_vector[i].get_read() << ", " << pipe_vector[i].get_write() << ", " << pipe_vector[i].get_count() << endl;
+			if( (pipe_vector[i].client_ID == serving_client_id)&&   (pipe_vector[i].get_count() == 0) && pipe_vector[i].isUserPipe == false ){
+				
+				cout << " I am target" << endl;
 				target_flag = true;
 				pop_out_index = i;
 				newProcessIn = pipe_vector[i].get_read();
 				pipe_reached_target = pipe_vector[i];
-				//write to pipe which arrives target will be useless. it'll be closed in both child and parent process.
-				close(pipe_vector[i].get_write() );
+				close(pipe_vector[i].get_write() );			//write to pipe which arrives target will be useless. it'll be closed in both child and parent process.
 			}
 			//count can not decrease here. itll influence following Pioneer part.
 		}
@@ -769,19 +661,21 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 		int isPioneer = true;
 		if(pipe_flag == true){
 			for(int i = 0; i< pipe_vector.size(); i++){
-				if( (pipe_vector[i].client_ID == serving_client_id) &&
-					(current_pipe_record.get_count() == pipe_vector[i].get_count() ) &&
-					(current_pipe_record.isUserPipe == false) ){
+				if( (pipe_vector[i].client_ID == serving_client_id) &&  (current_pipe_record.get_count() == pipe_vector[i].get_count() )  ){
+					cout << "getting in L661 " << endl;
+					
 					newProcessOut = pipe_vector[i].get_write();
 					isPioneer = false;
 					if(shockMarckflag == true){
 						newProcessErr = pipe_vector[i].get_write();
 					}
+					cout << "reditection. read: " <<  newProcessIn << ", write: " << newProcessOut << endl;
+					cout << "fcurrent_pipe_record.get_read()  :  " << current_pipe_record.get_read()  << endl;
 				}
 			}
 			if (isPioneer == true) {		//it's pioneer pipe. create it !
-				cout << "storing pipe!!!"<< endl;
 				current_pipe_record.creat_pipe();
+				cout << "createing pipe!!!"<< "read: " <<  current_pipe_record.get_read() << ", write: " << current_pipe_record.get_write() << endl;
 				current_pipe_record.isUserPipe = false;
 				pipe_vector.push_back( current_pipe_record );
 				newProcessOut = current_pipe_record.get_write();
@@ -791,57 +685,51 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 			}			
 		}
 		pid_t pid;
-		while ( (pid = fork()) < 0){
+		while ( ( pid = fork() ) < 0){
 			cout << "child process creating fail" << endl;
 		}
 		if( pid == 0){	 											// child
-			cout << " still there? " << endl;
-			if(target_flag == true){
-				cout << " getting target." << endl;
-				dup2(newProcessIn, STDIN_FILENO);  
-				close(newProcessIn);
-			}
-			if(pipe_flag == true){
-				cout << "write into pipe" << endl;
-				
-				if(shockMarckflag == true ){
-					dup2(newProcessErr, STDERR_FILENO);
-				}
-				if(reuse_user_pipe_flag == true){									//passing Upipe to normal pipe.
-					close(current_pipe_record.get_Upipe_write() );
-					dup2(newProcessIn, STDIN_FILENO);
-					close(newProcessIn);
-					cout << "reuse_user_pipe" << endl;
-				}
-				close(current_pipe_record.get_read());
+			
+			if(pipe_flag == true){						
+				cout << "fork: pipe_flag == true, close: " << current_pipe_record.get_read() << ", " << newProcessOut<< endl;
+				close(current_pipe_record.get_read());			//don't know why sometimes it close STDIN_FDNO....
 				dup2(newProcessOut, STDOUT_FILENO);  
+				if(shockMarckflag == true ){
+					dup2(newProcessErr, STDERR_FILENO);		// newProcessErr = newProcessOut
+				}
 				close(newProcessOut);
 			} else if(file_flag == true ) {
 				dup2(newProcessOut, STDOUT_FILENO);	
 				close(newProcessOut);
 			} else if(create_user_pipe_flag == true){	//sending msg to reciever
-				close(current_pipe_record.get_Upipe_raed());
+				close(current_pipe_record.get_Upipe_read());
 				dup2(newProcessOut, STDOUT_FILENO);
 				dup2(newProcessErr, STDERR_FILENO);
 				close(newProcessOut);  //newProcessOut = newProcessErr
-			} else if (user_pipe_reciever_flag == true && (reuse_user_pipe_flag == false) ){				//basic recieve msg form sender and print out.
-				close(current_pipe_record.get_Upipe_write());		
-				dup2(newProcessIn, STDIN_FILENO);		//recieve msg from sender.
-				close(newProcessIn);
-				cout << "basic recieve msg form sender and print out.." << endl;
 			}
-			//if there is no fd change,  eveytime child fork starts with shell_std_in/out/err
-			//e.q. isolated cmd like ls in "cat file |2 ls number"
-			cout << "fd change stop here" << endl;
+			//if there is no fd change,  eveytime child fork starts with shell_std_in/out/err.  e.q. isolated cmd like ls in "cat file |2 ls number"
+			if(target_flag == true){
+				dup2(newProcessIn, STDIN_FILENO);  
+				close(newProcessIn);
+			}
+			if(isRecieveing_Upipe == true){
+				if( double_Upipe == false){
+					cout << "fork: double_Upipe == false, close: " <<newProcessIn << current_pipe_record.get_Upipe_write() << endl;
+					close(current_pipe_record.get_Upipe_write() );
+				}else{
+					cout << "fork: double_Upipe == true, close: " << Upipe_write_tmp<< endl;
+					close(Upipe_write_tmp);
+				}
+				dup2(newProcessIn, STDIN_FILENO);
+				close(newProcessIn);
+			}
 			//get argv.			
 			const char *pargv[argv_table.size() + 1];
 			convert_argv_to_consntchar(pargv, argv_table);
 			execvp(pargv[0], (char **) pargv);
 			if(execvp(pargv[0], (char **) pargv) == -1 ){
 				fprintf(stderr,"Unknown command: [%s].\n",pargv[0]);
-				//unknown_cmd = true; //unknown command still not work. if "ls | cd", pipe still remain in the npshell. 
 			}
-			
 			exit(-1);
 
 			
@@ -849,7 +737,7 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 			usleep(10000); 
 			signal(SIGCHLD, childHandler);
 			for(int i = 0; i< pipe_vector.size(); i++){
-				if( (pipe_vector[i].client_ID == serving_client_id) && (pipe_vector[i].isUserPipe == false) ){			
+				if( (pipe_vector[i].client_ID == serving_client_id) ){			
 					cout <<"count decrease " << endl;
 					pipe_vector[i].count_decrease();
 				}
@@ -858,16 +746,21 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 				cout << "close file flow" << endl;
 				close(newProcessOut);	
 			}
-			if (user_pipe_reciever_flag == true ){
+			if (isRecieveing_Upipe == true ){
 				usleep(10000); 
-				current_pipe_record.close_Upipe();	//userpipe finish it's job.
+				if(double_Upipe == false){			
+				cout << "master: double_Upipe == false, release: " << current_pipe_record.get_Upipe_read() <<", "<<current_pipe_record.get_Upipe_write() <<endl;
+					current_pipe_record.close_Upipe();	//userpipe finish it's job.  the origin user_pipe already erased when copy  user_pipe.to current pipe.
+				}else{				// ">ID <ID" or "<ID >ID" case
+					close(Upipe_read_tmp);
+					close(Upipe_write_tmp);
+					cout << "master: double_Upipe == true , release: " << Upipe_read_tmp<<", " << Upipe_write_tmp<< endl;
+				}
 			}
 			if(target_flag == true){
 				//pipe_reached_target.close_pipe(); 
-				cout << "close normal_pipe" << endl;
 				close(pipe_reached_target.get_read());
 				pipe_vector.erase(pipe_vector.begin()+pop_out_index);
-					cout << "pipe_vector size after release : " << pipe_vector.size() << endl;
 			}
 			if(STDOUT_FILENO == newProcessOut || file_flag == true ){		//command pid want to printout to console. or wait writting to file.
 				int status;															
@@ -909,12 +802,8 @@ vector<string> retrieve_argv(stringstream &ss){
 		string token;
 		string special_symbol = ss.str();
 		size_t found = special_symbol.find("\'");
-		//string user_pipe_with_pipe = ss.str();
-		//strcpy(user_pipe_with_pipe, ss.str() );
-		//char* substr = NULL;
-		//bool user_pipe_advance = false;
 		bool isMessage = (found!=string::npos);			//if it's message, ignore symbol |!><
-		while((ss >> ws) && ( !strchr("|!><", ss.peek()) || isMessage) && (ss >> token)  ){ 
+		while((ss >> ws) && ( !strchr("|!>", ss.peek()) || isMessage) && (ss >> token)  ){ 
 				argv.push_back(token);
 		}
 		return argv;
