@@ -4,6 +4,7 @@
 #include <string>		
 #include <cstring>		//strchr()
 #include <vector>
+#include <map>
 #include <algorithm>    // 														std::replace
 #include <stdio.h>  		// 																			fprint error
 #include <stdlib.h>		//																							setenv
@@ -19,7 +20,7 @@
 //#include <string.h>	//for version2 at line 135-145 strtok
 //#include <stdlib.h>	//for version2 at line 135-145 strtok
 using namespace std;
-#define CLIENT_LIMIT 31
+#define CLIENT_LIMIT 2
 #define CLIENT_NAME_SIZE 20
 #define PORT_SIZE	6
 #define MEMBER_JOIN 0
@@ -35,19 +36,15 @@ char Welcome[] = "***************************************\n** Welcome to the inf
 char prompt[] = "% ";
 bool isUserExist(int);
 //==================
-
-
-
 //=======parsing======
 void childHandler(int);
 void convert_argv_to_consntchar(const char, vector<string> );
 int parse_cmd(int, stringstream &);
-bool special_cmd(stringstream&);
+bool special_cmd(int, stringstream&);
 bool isChat_cmd(int, stringstream&);
 bool shell_exit = false;
 vector<string> retrieve_argv(stringstream&);
 //==================
-
 class Pipe_class{
 	public: 
 	Pipe_class(){
@@ -94,12 +91,12 @@ class Pipe_class{
 		pipe(user_pipe_pfd);
 	}
 	void close_pipe(){
-		cout << "pipe is closing" << endl;
+		//cout << "pipe is closing" << endl;
 		close(pfd[0]);
 		close(pfd[1]);
 	}
 	void close_Upipe(){
-		cout << "user_pipe_pfd is closing" << endl;
+		//cout << "user_pipe_pfd is closing" << endl;
 		close(user_pipe_pfd[0]);
 		close(user_pipe_pfd[1]);
 	}
@@ -120,6 +117,7 @@ class Client_state{
 			port = 0;
 			ID_from_sender = -1;
 			ID_to_reciever = -1;
+			envVar.insert(pair<string,string>("PATH","bin:."));
 		}
 		void reset(){
 			client_fd = -1;
@@ -130,8 +128,8 @@ class Client_state{
 			port = 0;
 			ID_from_sender = -1;
 			ID_to_reciever = -1;
-			//memset( enviroment_variable, '\0', 512*sizeof(char) );
-			//strncpy(enviroment_variable, "PATH", "bin:.", strlen(newname) );
+			envVar.clear();
+			envVar.insert(pair<string,string>("PATH","bin:."));
 		};
 		void change_name(const char* newname){
 			memset( client_name, '\0', CLIENT_NAME_SIZE*sizeof(char) );
@@ -141,6 +139,15 @@ class Client_state{
 			sprintf(charID,"%d",client_ID);
 			return charID;
 		}
+		void Csetenv(string key, string value){
+			setenv(key.c_str(), value.c_str(), 1);
+			envVar.insert(pair<string,string>(key,value));
+		}
+		void Recallenv(){
+			clearenv();
+			for (std::map<string, string>::iterator it = envVar.begin(); it != envVar.end(); ++it)
+				setenv(it->first.c_str(), it->second.c_str(), 1);
+		}
 		int client_fd;
 		int client_ID;
 		char charID[16];
@@ -149,14 +156,14 @@ class Client_state{
 		unsigned short int port;									//not sure about port size.
 		int ID_from_sender;				// //for broadcasting msg.
 		int ID_to_reciever;
-		//char enviroment_variable[512];
+		map<string,string> envVar;
 };
 vector<Pipe_class> pipe_vector;				
 Client_state Client_manage_list[CLIENT_LIMIT] ;
 
 int main(int argc, char* argv[]){
 	
-	setenv("PATH", "bin:.", 1) ; 
+	setenv("PATH", "bin:.", 1); 
 
 
 	for(int i=0 ; i< CLIENT_LIMIT; i++){
@@ -182,7 +189,7 @@ int main(int argc, char* argv[]){
 	hints.ai_flags = AI_PASSIVE;				//don't know yet/////////////////////////////////
 													//argv[1] is port setted when execute the program.   '80' usually used for http .etc.
 	if( (rv = getaddrinfo(NULL, argv[1], &hints, &ai) ) != 0){			//getinfo helps to confige pre setting. three input and 1 output. if success,  return 0.
-		fprintf(stderr, "selectserver: %s !!!!!!!!\n", gai_strerror(rv));		//don't know yet/////////////////////////////////
+		//fprintf(stderr, "selectserver: %s !!!!!!!!\n", gai_strerror(rv));		//don't know yet/////////////////////////////////
 		exit(1);				//don't know yet/////////////////////////////////
 	}
 	listener = socket(AF_INET, SOCK_STREAM, 0);		//AF_INET is IPV4. 
@@ -205,21 +212,30 @@ int main(int argc, char* argv[]){
 	int SERVER_STDIN_FD = dup(STDIN_FILENO);
 	int SERVER_STDOUT_FD = dup(STDOUT_FILENO);
 	int SERVER_STDERR_FD = dup(STDERR_FILENO);
+	int total_connections = 0;
 	int serving_to_client_fd = -1;
 	int serving_client_id = -1;
+	bool wasOverListenLimit = false;
+	struct timeval tv;
+	tv.tv_sec = 1;
 	while(true){
-		 rfds = master; // update rfds from master.
-
-		while(select(fdmax+1, &rfds, NULL, NULL, NULL) <= -1) {
-			cout << "sth happen to select" << endl;
-			//perror("[error] select");
+		rfds = master; // update rfds from master.
+		while(select(fdmax+1, &rfds, NULL, NULL, &tv) <= -1) {
+			perror("[error] select");
 			//exit(4);
 		}
 		for(int i = 0; i <= fdmax; i++) {
 			if (FD_ISSET(i, &rfds)) {
 				//new connection 
 				if (i == listener) {
-					newfd = accept(listener, (struct sockaddr *)&clientSockInfo,	&addrlen);		//client_addr what's diffferent storage and socearr?
+					newfd = accept(listener, (struct sockaddr *)&clientSockInfo, &addrlen);
+						
+					if(total_connections == CLIENT_LIMIT){
+						close(newfd);
+						break;
+					}
+					total_connections++;
+					
 					if(newfd == -1){
 						cout << "fail of createing client_fd" << endl;
 					//fd create succeed.
@@ -246,13 +262,14 @@ int main(int argc, char* argv[]){
 
 					}
 				}else{
+
 					serving_to_client_fd = i;
 					for(int j = 0; j < CLIENT_LIMIT; j++){
 						if(Client_manage_list[j].client_fd == i){
 							serving_client_id = j;
 						}
 					}
-					
+					Client_manage_list[serving_client_id].Recallenv();
 					nbytes = recv(serving_to_client_fd, input_buffer, sizeof(input_buffer), 0);	//not handle recv <0 yet.
 					//handling '\r' from telnet.
 					char* pch = strchr(input_buffer,'\r');		
@@ -270,7 +287,11 @@ int main(int argc, char* argv[]){
 								pipe_vector.erase(it);
 							}
 						}
+						total_connections--;
+						wasOverListenLimit = false;
 						Client_manage_list[serving_client_id].reset();
+						clearenv();
+						setenv("PATH", "bin:.", 1) ;
 						close(i);
 						FD_CLR(i, &master);
 					}else{	//there is data comming
@@ -278,7 +299,7 @@ int main(int argc, char* argv[]){
 						dup2(serving_to_client_fd, STDIN_FILENO);
 						dup2(serving_to_client_fd, STDOUT_FILENO);
 						dup2(serving_to_client_fd, STDERR_FILENO);
-						if( !special_cmd(sscmd)){
+						if( !special_cmd(serving_client_id, sscmd)){
 							if(shell_exit == true){
 								//no op
 							}else if(isChat_cmd(serving_client_id,sscmd) ){
@@ -450,6 +471,8 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 	bool shockMarckflag;
 	bool file_flag;
 	bool target_flag;
+	bool Upipe_err_flag;
+	//int Upipe_err_fd;
 	//bool unknown_cmd = false;     //unknown command still not work. if "ls | cd", pipe still remain in the npshell. 
 	Pipe_class current_pipe_record;
 	Pipe_class pipe_reached_target;
@@ -466,6 +489,7 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 		shockMarckflag = false;
 		file_flag	= false;
 		target_flag = false;
+		Upipe_err_flag = false;
 		vector<string> argv_table = retrieve_argv(sscmd);   // parse out cmd before sign |!><
 		if (argv_table.empty()   ){
 			break;
@@ -492,15 +516,11 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 					while (numb >> temp){
 						pipenumber += temp;
 					}
-					//check if user exist or not.
-					if(isUserExist(pipenumber) == false){	 //if not exist, return 0;
-						cout << "*** Error: user #" << pipenumber << " does not exist yet. ***" << endl;
-						return 0;
-					}
+
 					//looking for user pipe.
 					for(vector<Pipe_class>::iterator it = pipe_vector.begin(); it< pipe_vector.end(); ++it){
 						if( ((*it).isUserPipe == true ) && ((*it).client_ID == serving_client_id) && ((*it).sender == pipenumber) ){
-							cout << "argv_table size " << argv_table.size() << endl;
+							//cout << "argv_table size " << argv_table.size() << endl;
 							argv_table.pop_back();
 							isRecieveing_Upipe = true;
 							Client_manage_list[serving_client_id].ID_from_sender = pipenumber;	//for braodcast msg.
@@ -512,18 +532,24 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 							break;
 						}
 					}
-					//avoid pipe not exist. if true(recieve success), then broadcast.  if false ,return 0;
-					if(isRecieveing_Upipe == false){
+					//check if Upipe accept success. otherwise user(ID)/Upipe not exist.
+					if(isUserExist(pipenumber) == false){	 //if not exist, return 0;
+						cout << "*** Error: user #" << pipenumber << " does not exist yet. ***" << endl;
+						newProcessIn = open("/dev/null", O_RDWR);
+						Upipe_err_flag = true;
+					}else if(isRecieveing_Upipe == false){
 						string err_msg = "** Error: the pipe #"; err_msg += Client_manage_list[pipenumber].get_charID();
 						err_msg += "->#"; 								err_msg += Client_manage_list[serving_client_id].get_charID();
 						err_msg += " does not exist yet. ***";
 						cout << err_msg << endl;
-						return 0;
+						Upipe_err_flag = true;
+						newProcessIn = open("/dev/null", O_RDWR);
+					}else{		
+						char user_pipe_msg[1024] = {0};
+						string tmp = sscmd.str();
+						strcpy(user_pipe_msg, tmp.c_str());
+						broadcast(serving_client_id, USER_PIPE_RECIEVER, user_pipe_msg);
 					}
-					char user_pipe_msg[1024] = {0};
-					string tmp = sscmd.str();
-					strcpy(user_pipe_msg, tmp.c_str());
-					broadcast(serving_client_id, USER_PIPE_RECIEVER, user_pipe_msg);
 					
 				}
 			}
@@ -531,7 +557,7 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 	
 
 		if(sign_number[0] == '|'){
-				cout << "I am piping " << endl;
+				//cout << "I am piping " << endl;
 				current_pipe_record.client_ID = serving_client_id;
 				
 				pipe_flag = true;
@@ -613,9 +639,9 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 					current_pipe_record.isUserPipe = true;
 					current_pipe_record.client_ID = pipenumber;				// clientID  is the same as reciever.
 					current_pipe_record.sender = serving_client_id;
-					cout << "getting in L607 " << endl;
+					//cout << "getting in L607 " << endl;
 					current_pipe_record.creat_Upipe();
-					cout << "read, write" << current_pipe_record.get_Upipe_read() << ", " << current_pipe_record.get_Upipe_write() << endl;
+					//cout << "read, write" << current_pipe_record.get_Upipe_read() << ", " << current_pipe_record.get_Upipe_write() << endl;
 					current_pipe_record.set_numPipe_count(999);    
 					pipe_vector.push_back( current_pipe_record );
 					
@@ -637,17 +663,17 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 				//break;
 		}
 		
-		cout << "pipe_vector size : " << pipe_vector.size() << endl;
+		//cout << "pipe_vector size : " << pipe_vector.size() << endl;
 		
 		//if upcomming child process is target or not.
 		int target_flag = false;
 		int pop_out_index = -1;				//for releasig from pipe_vector
 		for(int i = 0; i< pipe_vector.size(); i++){				//there would be only on input in a instruction. won't be ls | cat <0
-			cout << "ID, isUserpipe, rfd, wfd, count " << pipe_vector[i].client_ID << ", " << pipe_vector[i].isUserPipe << ", " << endl;
-			cout << pipe_vector[i].get_read() << ", " << pipe_vector[i].get_write() << ", " << pipe_vector[i].get_count() << endl;
+			//cout << "ID, isUserpipe, rfd, wfd, count " << pipe_vector[i].client_ID << ", " << pipe_vector[i].isUserPipe << ", " << endl;
+			//cout << pipe_vector[i].get_read() << ", " << pipe_vector[i].get_write() << ", " << pipe_vector[i].get_count() << endl;
 			if( (pipe_vector[i].client_ID == serving_client_id)&&   (pipe_vector[i].get_count() == 0) && pipe_vector[i].isUserPipe == false ){
 				
-				cout << " I am target" << endl;
+				//cout << " I am target" << endl;
 				target_flag = true;
 				pop_out_index = i;
 				newProcessIn = pipe_vector[i].get_read();
@@ -662,20 +688,20 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 		if(pipe_flag == true){
 			for(int i = 0; i< pipe_vector.size(); i++){
 				if( (pipe_vector[i].client_ID == serving_client_id) &&  (current_pipe_record.get_count() == pipe_vector[i].get_count() )  ){
-					cout << "getting in L661 " << endl;
+					//cout << "getting in L661 " << endl;
 					
 					newProcessOut = pipe_vector[i].get_write();
 					isPioneer = false;
 					if(shockMarckflag == true){
 						newProcessErr = pipe_vector[i].get_write();
 					}
-					cout << "reditection. read: " <<  newProcessIn << ", write: " << newProcessOut << endl;
-					cout << "fcurrent_pipe_record.get_read()  :  " << current_pipe_record.get_read()  << endl;
+					//cout << "reditection. read: " <<  newProcessIn << ", write: " << newProcessOut << endl;
+					//cout << "fcurrent_pipe_record.get_read()  :  " << current_pipe_record.get_read()  << endl;
 				}
 			}
 			if (isPioneer == true) {		//it's pioneer pipe. create it !
 				current_pipe_record.creat_pipe();
-				cout << "createing pipe!!!"<< "read: " <<  current_pipe_record.get_read() << ", write: " << current_pipe_record.get_write() << endl;
+				//cout << "createing pipe!!!"<< "read: " <<  current_pipe_record.get_read() << ", write: " << current_pipe_record.get_write() << endl;
 				current_pipe_record.isUserPipe = false;
 				pipe_vector.push_back( current_pipe_record );
 				newProcessOut = current_pipe_record.get_write();
@@ -691,9 +717,9 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 		if( pid == 0){	 											// child
 			
 			if(pipe_flag == true){						
-				cout << "fork: pipe_flag == true, close: " << current_pipe_record.get_read() << ", " << newProcessOut<< endl;
-				close(current_pipe_record.get_read());			//don't know why sometimes it close STDIN_FDNO....
-				dup2(newProcessOut, STDOUT_FILENO);  
+				//cout << "fork: pipe_flag == true, close: " << current_pipe_record.get_read() << ", " << newProcessOut<< endl;
+				close(current_pipe_record.get_read());			//it suppose to close read of new pipe.  If other data want to use the same pipe, STD_read would be useless.
+				dup2(newProcessOut, STDOUT_FILENO);  	// however, it'll effect  client taking data from client pipe. 
 				if(shockMarckflag == true ){
 					dup2(newProcessErr, STDERR_FILENO);		// newProcessErr = newProcessOut
 				}
@@ -714,13 +740,17 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 			}
 			if(isRecieveing_Upipe == true){
 				if( double_Upipe == false){
-					cout << "fork: double_Upipe == false, close: " <<newProcessIn << current_pipe_record.get_Upipe_write() << endl;
+					//cout << "fork: double_Upipe == false, close: " <<newProcessIn << current_pipe_record.get_Upipe_write() << endl;
 					close(current_pipe_record.get_Upipe_write() );
 				}else{
-					cout << "fork: double_Upipe == true, close: " << Upipe_write_tmp<< endl;
+					//cout << "fork: double_Upipe == true, close: " << Upipe_write_tmp<< endl;
 					close(Upipe_write_tmp);
 				}
 				dup2(newProcessIn, STDIN_FILENO);
+				close(newProcessIn);
+			}
+			if(Upipe_err_flag == true){
+				dup2(newProcessIn, STDIN_FILENO);  
 				close(newProcessIn);
 			}
 			//get argv.			
@@ -738,23 +768,23 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 			signal(SIGCHLD, childHandler);
 			for(int i = 0; i< pipe_vector.size(); i++){
 				if( (pipe_vector[i].client_ID == serving_client_id) ){			
-					cout <<"count decrease " << endl;
+					//cout <<"count decrease " << endl;
 					pipe_vector[i].count_decrease();
 				}
 			}
 			if(file_flag == true ){  //close pipe_write_only 
-				cout << "close file flow" << endl;
+				//cout << "close file flow" << endl;
 				close(newProcessOut);	
 			}
 			if (isRecieveing_Upipe == true ){
 				usleep(10000); 
 				if(double_Upipe == false){			
-				cout << "master: double_Upipe == false, release: " << current_pipe_record.get_Upipe_read() <<", "<<current_pipe_record.get_Upipe_write() <<endl;
+				//cout << "master: double_Upipe == false, release: " << current_pipe_record.get_Upipe_read() <<", "<<current_pipe_record.get_Upipe_write() <<endl;
 					current_pipe_record.close_Upipe();	//userpipe finish it's job.  the origin user_pipe already erased when copy  user_pipe.to current pipe.
 				}else{				// ">ID <ID" or "<ID >ID" case
 					close(Upipe_read_tmp);
 					close(Upipe_write_tmp);
-					cout << "master: double_Upipe == true , release: " << Upipe_read_tmp<<", " << Upipe_write_tmp<< endl;
+					//cout << "master: double_Upipe == true , release: " << Upipe_read_tmp<<", " << Upipe_write_tmp<< endl;
 				}
 			}
 			if(target_flag == true){
@@ -770,7 +800,7 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 		}
 	}
 }
-bool special_cmd(stringstream &sscmd){
+bool special_cmd(int serving_client_id, stringstream &sscmd){
 	stringstream ss;
 	string cmdline = sscmd.str();
     string parsed_word, cmd;
@@ -779,17 +809,17 @@ bool special_cmd(stringstream &sscmd){
     ss>> parsed_word;
     if(parsed_word == "printenv"){
 		ss >> parsed_word;
-		if(parsed_word == "PATH" || parsed_word == "LANG"){
-			char* pPath = getenv(parsed_word.c_str());
-			if(pPath != NULL)
-				cout<<pPath<<endl;
-		}
+		char* pPath = getenv(parsed_word.c_str());
+		if(pPath != NULL)
+			cout<<pPath<<endl;
+		
 		return true;
     }
     else if(parsed_word == "setenv"){
         ss >> cmd;
         ss >> parsed_word;
-        setenv(cmd.c_str(), parsed_word.c_str(), 1) ;   
+		Client_manage_list[serving_client_id].Csetenv(cmd, parsed_word);
+        //setenv(cmd.c_str(), parsed_word.c_str(), 1) ;   
 		return true;
     }else if (parsed_word == "exit"){
 			shell_exit = true;
