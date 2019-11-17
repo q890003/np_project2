@@ -15,13 +15,14 @@
 //#include <string.h>	//for version2 at line 135-145 strtok
 //#include <stdlib.h>	//for version2 at line 135-145 strtok
 using namespace std;
-
+#define INPUT_BUFFER_SIZE 15000
 
 void childHandler(int);
 void convert_argv_to_consntchar(const char, vector<string> );
 void parse_cmd(stringstream &);
 bool special_cmd(stringstream&);
 bool shell_exit = false;
+//char* revise_input(char* );
 vector<string> retrieve_argv(stringstream&);
 
 class Pipe_class{
@@ -57,11 +58,11 @@ vector<Pipe_class> pipe_vector;
 //int client_fd = 0;
 
 
-int main(){
+int main(int argc, char* argv[]){
 	
 	setenv("PATH", "bin:.", 1) ; 
     string cmd;
-	char input_buffer[1024]= {0};
+	//char input_buffer[1024]= {0};
 	string output_buffer="% ";
 	int socket_fd =0;
 	int client_fd = 0;
@@ -69,17 +70,19 @@ int main(){
 	if (socket_fd == -1){
         cout <<"Fail to create a socket." << endl;
     }
-
+	int opt = 1;
+	setsockopt(socket_fd, SOL_SOCKET,SO_REUSEADDR,&opt, sizeof(opt));
+	setsockopt(socket_fd, SOL_SOCKET,SO_REUSEPORT, &opt, sizeof(opt));
 	struct sockaddr_in serverInfo,clientInfo;
 	socklen_t  addrlen = sizeof(clientInfo);
 	bzero(&serverInfo,sizeof(serverInfo));  //initiialize server info.
 	bzero(&serverInfo,sizeof(clientInfo));  //initiialize client info.
 	serverInfo.sin_family = PF_INET;
     serverInfo.sin_addr.s_addr = INADDR_ANY;
-    serverInfo.sin_port = htons(8700);
+    serverInfo.sin_port = htons(atoi(argv[1]));
 	bind(socket_fd, (struct sockaddr *)&serverInfo, sizeof(serverInfo));
 	listen(socket_fd, 30);
-	
+	stringstream sscmd;
 	
 	while(true){
 
@@ -92,21 +95,35 @@ int main(){
 		
 		if(replica_pid == 0){
 			
-			cout <<"replica server." << endl;
+			//cout <<"replica server." << endl;
 			dup2(client_fd, STDIN_FILENO);
 			dup2(client_fd, STDOUT_FILENO);
 			dup2(client_fd, STDERR_FILENO);
 			close(client_fd);
-				
+
 		
 			while(true){
 				send(STDOUT_FILENO, output_buffer.c_str(), (size_t) output_buffer.length(), 0);
-				recv(STDIN_FILENO, input_buffer, sizeof(input_buffer), 0);
-				char* pch = strchr(input_buffer,'\r');
-				if( pch != NULL)
-					*pch = '\0';
+				char input_buffer[INPUT_BUFFER_SIZE]= {0};
+				read(STDIN_FILENO, input_buffer, sizeof(input_buffer) );
+				char temp[INPUT_BUFFER_SIZE];
+				int k =0;
+				strncpy(temp, input_buffer, sizeof(input_buffer)); 
+				memset( input_buffer, '\0', sizeof(input_buffer)*sizeof(char) );
+				for(int i = 0; i< sizeof(temp); i++ ){
+					if(temp[i] == '\r'){
+						continue;
+					}else if(temp[i] == '\n'){
+						continue;
+					}else{
+						input_buffer[k] = temp[i];
+						k++;
+					}
+				}
 				cmd = input_buffer;
-				stringstream sscmd(cmd);
+				sscmd.str("");
+				sscmd.clear();
+				sscmd.str(cmd);
 					if( !special_cmd(sscmd)){
 						if(shell_exit == true){
 							break;
@@ -156,8 +173,12 @@ void parse_cmd(stringstream &sscmd){
 		file_flag	= false;
 		target_flag = false;
 		unknown_cmd = false;
+		string teststring = sscmd.str();
+		//cout <<"string test in parsing " << teststring << endl;
+		vector<string> argv_table;
 		
-		vector<string> argv_table = retrieve_argv(sscmd);   // parse out cmd before sign |!>
+		argv_table = retrieve_argv(sscmd);   // parse out cmd before sign |!>
+
 		if (argv_table.empty())
 			break;
 		string sign_number;
@@ -254,6 +275,7 @@ void parse_cmd(stringstream &sscmd){
 			}			
 		} 
 		pid_t pid;
+
 		while ( (pid = fork()) < 0){
 			usleep(100);
 		}
@@ -281,6 +303,9 @@ void parse_cmd(stringstream &sscmd){
 			//get argv.			
 			const char *pargv[argv_table.size() + 1];
 			convert_argv_to_consntchar(pargv, argv_table);
+			//cout << pargv[0] << endl;
+			//cout << pargv[1] << endl;
+			//cout << "argv_table.size() is: " << argv_table.size() << endl;
 			execvp(pargv[0], (char **) pargv);
 			if(execvp(pargv[0], (char **) pargv) == -1 ){
 				fprintf(stderr,"Unknown command: [%s].\n",pargv[0]);
