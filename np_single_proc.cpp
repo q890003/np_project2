@@ -120,6 +120,7 @@ class Client_state{
 			client_ID = -1;
 			strncpy(client_name,"(no name)",strlen("(no name)") );
 			memset( IP, 0, INET_ADDRSTRLEN*sizeof(char) );
+			memset( charID, 0, sizeof(charID) );
 			port = 0;
 			ID_from_sender = -1;
 			ID_to_reciever = -1;
@@ -131,6 +132,7 @@ class Client_state{
 			memset( client_name, '\0', CLIENT_NAME_SIZE*sizeof(char) );
 			strncpy(client_name,"(no name)",strlen("(no name)") );
 			memset( IP, 0, INET_ADDRSTRLEN*sizeof(char) );
+			memset( charID, 0, sizeof(charID) );
 			port = 0;
 			ID_from_sender = -1;
 			ID_to_reciever = -1;
