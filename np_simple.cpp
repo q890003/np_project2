@@ -345,11 +345,9 @@ bool special_cmd(stringstream &sscmd){
     ss>> parsed_word;
     if(parsed_word == "printenv"){
 		ss >> parsed_word;
-		if(parsed_word == "PATH" || parsed_word == "LANG"){
 			char* pPath = getenv(parsed_word.c_str());
 			if(pPath != NULL)
 				cout<<pPath<<endl;
-		}
 		return true;
     }
     else if(parsed_word == "setenv"){

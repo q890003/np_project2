@@ -842,7 +842,6 @@ bool special_cmd(int serving_client_id, stringstream &sscmd){
         ss >> cmd;
         ss >> parsed_word;
 		Client_manage_list[serving_client_id].Csetenv(cmd, parsed_word);
-        //setenv(cmd.c_str(), parsed_word.c_str(), 1) ;   
 		return true;
     }else if (parsed_word == "exit"){
 			shell_exit = true;

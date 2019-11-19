@@ -22,11 +22,11 @@
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <signal.h>
-//#include <string.h>	//for version2 at line 135-145 strtok
-//#include <stdlib.h>	//for version2 at line 135-145 strtok
+
 using namespace std;
 #define CLIENT_LIMIT 31
 #define CLIENT_NAME_SIZE 20
+#define UPIPE_NAME_SIZE 20
 #define SHARE_MSG_SIZE 1024
 #define INPUT_BUFFER_SIZE 15000
 #define CLIST_KEY 123
@@ -81,6 +81,7 @@ class Client_state{
 			strcpy(name,"(no name)");
 			memset( IP, 0, INET_ADDRSTRLEN);
 			port = -1;
+			broadcast_flag = false;
 		}
 		void change_name(const char* newname){
 			memset( name, '\0', CLIENT_NAME_SIZE );
@@ -90,6 +91,7 @@ class Client_state{
 		char name[CLIENT_NAME_SIZE] = {0};
 		char IP[INET_ADDRSTRLEN] = {0};
 		unsigned short int port;
+		bool broadcast_flag = false;
 };
 class Sh_mem{
 	public:
@@ -127,6 +129,16 @@ class Sh_mem{
 			}
 			return -1;
 		}
+		int broadcast_read_check(Client_state *Client_List){
+			for(int i = 1; i < CLIENT_LIMIT; i++){
+				if(Client_List[i].pid != -1){
+					while(Client_List[i].broadcast_flag == true){	//true means there is broadcast msg.
+						//do nothing. wait till it accept brocast msg.
+					}
+				}
+			}
+
+		}
 		void* attach_ptr;
 		key_t key;
 		int shmid;
@@ -137,6 +149,7 @@ class Upipe_receive{
 		int to[CLIENT_LIMIT];
 		int rfd[CLIENT_LIMIT];
 		int wfd[CLIENT_LIMIT];
+		char Upipe_name_to_receiver[CLIENT_LIMIT][UPIPE_NAME_SIZE];
 };
 class Upipe_send{
 	public:
@@ -164,10 +177,10 @@ Sh_mem CList_shm, MSG_shm, Upipe_shm;
 Client_state *Client_List;
 Upipe_send* Upipe;
 char *shm_msg;
-char upipe_name[10];
-int read_record[31] = {0};
-int Upipe_receiever = 0;
-int Upipe_sender = 0;
+bool read_record[31] = {false};
+int Upipe_receieverID = 0;
+int Upipe_senderID = 0;
+int UserID = -1;
 bool shell_exit = false;
 ///////////////////////////////////////
 
@@ -233,9 +246,14 @@ int main(int argc, char* argv[]){
 	Upipe_shm.getVoid_ptr(temp);
 	Upipe = (Upipe_send*)Upipe_shm.attach_ptr;
 	for(int i = 0; i < CLIENT_LIMIT; i++)
-		for(int j = 0; j < CLIENT_LIMIT; j++)
-			Upipe->sender[i].to[j] = -1;
-	
+		for(int j = 0; j < CLIENT_LIMIT; j++){
+			Upipe->sender[i].to[j] = false;
+			Upipe->sender[i].rfd[j] = -1;
+			Upipe->sender[i].wfd[j] = -1;
+			memset(Upipe->sender[i].Upipe_name_to_receiver[j],0,UPIPE_NAME_SIZE);
+			sprintf(Upipe->sender[i].Upipe_name_to_receiver[j],"user_pipe/%dto%d", i, j);
+		}
+			
 	signal(SIGINT, signalhandler);
 	signal(SIGUSR1, signalhandler);
 	signal(SIGUSR2, signalhandler);
@@ -246,16 +264,14 @@ int main(int argc, char* argv[]){
 	string cmd;
 	stringstream sscmd;
 	////////////////////////////////////////////////////////////////
-	//listernig loop.
+	//server listernig loop.
 	while(true){
 
 		client_fd = accept(socket_fd, (struct sockaddr*) &clientInfo, &addrlen);
-		cout << "got client !" << endl;
 		pid_t replica_pid = fork();
 		if(replica_pid == -1){
 			cout << "fork failed" << endl;
 
-		//listrning server.
 		}else if(replica_pid > 0){
 			char IP[INET_ADDRSTRLEN];
 			inet_ntop(AF_INET, &(clientInfo.sin_addr), IP, INET_ADDRSTRLEN);
@@ -263,71 +279,87 @@ int main(int argc, char* argv[]){
 			CList_shm.register_client(replica_pid, IP, port);
 			close(client_fd);
 
-		//client
-		}else if(replica_pid == 0){
+		
+		}else if(replica_pid == 0){ ////////////client/////////
+			//////////client initialization////////////////
+			////////////////////////////////////////////////
 			dup2(client_fd, STDIN_FILENO);
 			dup2(client_fd, STDOUT_FILENO);
 			dup2(client_fd, STDERR_FILENO);
 			close(client_fd);
-
+			UserID = get_client_id(getpid());
 			cout <<"****************************************\n** Welcome to the information server. **\n****************************************" << endl;
 			broadcast(MEMBER_JOIN, NULL);
-
-			//char input_buffer[INPUT_BUFFER_SIZE]= {0};
 			string cmd;
+			char input_buffer[INPUT_BUFFER_SIZE]= {0};
 			char temp[INPUT_BUFFER_SIZE];
+
+			//////////end client initialization////////////////
+			//////////////////////////////////////////////////
+
+			
 			while(true){
 				cout << "% " << flush;
-				//get_cmd(input_buffer);
-				//read(STDIN_FILENO, input_buffer, sizeof(input_buffer) );
-				cmd.clear();
-				getline(cin,cmd);
-				
+
+				//////////input cmd processing/////////////
+				memset(input_buffer,0,strlen(input_buffer));
+				read(STDIN_FILENO, input_buffer, sizeof(input_buffer) );
 				int k =0;
 				memset( temp, '\0', sizeof(temp) );
-				strcpy(temp, cmd.c_str()); 
-				for(int i = 0; i< sizeof(temp); i++ ){
-					if(temp[i] == '\r'){
+				strcpy(temp, input_buffer); 
+				for(int i = 0; i<= strlen(temp); i++ ){
+					if(temp[i] == '\r' || temp[i] == '\n')
 						continue;
-					}else if(temp[i] == '\n'){
-						continue;
-					}else{
-						cmd[k] = temp[i];
-						k++;
-					}
-					if(i = strlen(temp))
-						break;
+
+					input_buffer[k] = temp[i];
+					k++;
 				}
-				//cmd = input_buffer;
+				cmd = input_buffer;
 				sscmd.str("");
 				sscmd.clear();
 				sscmd.str(cmd);
+				///////////////////////////////////////////
+
 				if( !isSpecial_cmd(sscmd)){
-					
 					if(shell_exit == true){
-						break;
+						break;		//leave while loop
 					}else if(isChat_cmd(sscmd) ){
-						//no op if not chat_cmd continue
+						//no op
 					}else{
 						parse_cmd(sscmd);
 					}
 				}
 			}
 			broadcast(MEMBER_LEAVE, NULL);
-			Client_List[get_client_id(getpid())].init();
-			
+			Client_List[UserID].init();
+			//release unread Upipe
+			for(int i = 1 ; i < CLIENT_LIMIT; i++){
+				if(Upipe->sender[UserID].to[i] == true){
+					close(Upipe->sender[UserID].rfd[i]);
+					// close(Upipe->sender[get_client_id(getpid())].wfd[i]); //no need. it close wfd right after write to Upipe.
+					Upipe->sender[UserID].to[i] = false;
+					Upipe->sender[UserID].rfd[i] = -1;
+					Upipe->sender[UserID].wfd[i] = -1;
+					unlink(Upipe->sender[UserID].Upipe_name_to_receiver[i]);
+				}
+				if(Upipe->sender[i].to[UserID] == true){	
+					close(Upipe->sender[i].rfd[UserID]);
+					//close(Upipe->sender[i].wfd[get_client_id(getpid())]);	//no need. it close wfd right after write to Upipe.	
+					Upipe->sender[i].to[UserID] = false;
+					Upipe->sender[i].rfd[UserID] = -1;	
+					Upipe->sender[i].wfd[UserID] = -1;	
+					unlink(Upipe->sender[i].Upipe_name_to_receiver[UserID]   );
+				}
+			}
 			close(STDIN_FILENO);
 			close(STDOUT_FILENO);
 			close(STDERR_FILENO);
 			exit(-1);
 		}
+		//////////////////////////
 	}
 
 
-}
-void get_cmd(char* output_cmd){
-	
-	
 }
 bool isUserExist(int lookingID){
 	if(Client_List[lookingID].pid != -1 ){
@@ -339,7 +371,7 @@ bool isChat_cmd(stringstream &sscmd){
 	string cmdline = sscmd.str();
 	stringstream chat_cmd;
 	chat_cmd << cmdline;
-	vector<string> argv_table = retrieve_argv(chat_cmd);   // parse out cmd before sign |!><
+	vector<string> argv_table = retrieve_argv(chat_cmd);   // parse out cmd before sign |!>
 	if (argv_table.empty() ){
 		return true;
 	}
@@ -348,9 +380,9 @@ bool isChat_cmd(stringstream &sscmd){
 		for(int i = 1; i < CLIENT_LIMIT; i++){
 			if(Client_List[i].pid != -1 ){
 				if(Client_List[i].pid == getpid() ){
-					cout << i << "\t" << Client_List[i].name << "\t" << Client_List[i].IP<< "\t" <<":" << Client_List[i].port<< "\t" <<  "<-me" << endl;
+					cout << i << "\t" << Client_List[i].name << "\t" << Client_List[i].IP<<":" << Client_List[i].port<< "\t" <<  "<-me" << endl;
 				}else{
-					cout << i << "\t" << Client_List[i].name << "\t" << Client_List[i].IP<< ":" <<  Client_List[i].port<<endl;
+					cout << i << "\t" << Client_List[i].name << "\t" << Client_List[i].IP<<":" << Client_List[i].port<<endl;
 				}
 			}
 		}
@@ -363,37 +395,29 @@ bool isChat_cmd(stringstream &sscmd){
 				isName_exist = true;
 			}
 		}
-		cout << "name is" << argv_table.at(1) << endl;
 		if(isName_exist == true){
 			cout << "*** User '" << argv_table.at(1) <<"' already exists. ***"<< endl;
 		}else{	
-			memset(Client_List[ get_client_id(getpid()) ].name, '\0', CLIENT_NAME_SIZE*sizeof(char) );
-			Client_List[ get_client_id(getpid()) ].change_name(argv_table.at(1).c_str() ) ;
+			memset(Client_List[ UserID ].name, '\0', CLIENT_NAME_SIZE*sizeof(char) );
+			Client_List[UserID ].change_name(argv_table.at(1).c_str() ) ;
 			broadcast(NAME_CHANGE, NULL);
 		}
 		return true;
 	}
 	if(argv_table.at(0) == "yell" ){
 		char message[1024] = {0};
-
-		strcat(message, " ");
-		cmdline = cmdline.substr(5,cmdline.length()) ;
-		strcat(message, cmdline.c_str());
+		sprintf(message," %s",cmdline.substr(5,cmdline.length()).c_str()),
 		broadcast(MEMBER_YELL, message);
 		return true;
 	}				
-	
 	if(argv_table.at(0) == "tell" ){
-		if(!isUserExist(   atoi( argv_table.at(1).c_str()  )      )     ){
+		if(!isUserExist( atoi(argv_table.at(1).c_str()) )  ){
 			cout << "*** Error: user #" << argv_table.at(1).c_str() << " does not exist yet. ***" << endl;
 			return true;
 		}
-		char message[1024] = "*** ";
-		strcat(message, Client_List[ get_client_id(getpid()) ].name);
-		strcat(message, " told you ***: ");
-		cmdline = cmdline.substr(7,cmdline.length()) ;
-		strcat(message, cmdline.c_str());
-
+		char message[1024];
+		sprintf(message,"*** %s told you ***: %s",Client_List[ UserID ].name, cmdline.substr(7,cmdline.length()).c_str());
+		
 		MSG_shm.write_msg(message);	
 		kill(Client_List[atoi(argv_table.at(1).c_str() )].pid, SIGUSR1);
 		return true;
@@ -402,40 +426,39 @@ bool isChat_cmd(stringstream &sscmd){
 }
 
 void broadcast( int action, char* msg){
-	char broadcast_content[1024];
+	char broadcast_content[SHARE_MSG_SIZE];
 	memset(broadcast_content,0,strlen(broadcast_content));
-	cout << "ini braodcast is: " << broadcast_content << endl;
 	switch(action){
 		case MEMBER_JOIN:
-			sprintf(broadcast_content,"*** User '%s' entered from %s:%d. ***",Client_List[get_client_id(getpid())].name, 
-																			  Client_List[get_client_id(getpid())].IP,
-																			  Client_List[get_client_id(getpid())].port);
+			sprintf(broadcast_content,"*** User '%s' entered from %s:%d. ***",Client_List[UserID].name, 
+																			  Client_List[UserID].IP,
+																			  Client_List[UserID].port);
 		break;
 		case MEMBER_LEAVE:
-			sprintf(broadcast_content,"*** User '%s' left. ***", Client_List[get_client_id(getpid())].name);
+			sprintf(broadcast_content,"*** User '%s' left. ***", Client_List[UserID].name);
 		break;
 		case NAME_CHANGE:
-			sprintf(broadcast_content,"*** User from %s:%d is named '%s'.***", Client_List[get_client_id(getpid())].IP,
-																			   Client_List[get_client_id(getpid())].port,
-																			   Client_List[get_client_id(getpid())].name);
+			sprintf(broadcast_content,"*** User from %s:%d is named '%s'. ***", Client_List[UserID].IP,
+																			   Client_List[UserID].port,
+																			   Client_List[UserID].name);
 		break;
 		case MEMBER_YELL:
-			sprintf(broadcast_content,"*** %s yelled ***: %s", Client_List[get_client_id(getpid())].name, msg);
+			sprintf(broadcast_content,"*** %s yelled ***: %s", Client_List[UserID].name, msg);
 		break;
 		case USER_PIPE_SENDER:
-			sprintf(broadcast_content,"***  %s (#%d) just piped '%s' to %s (#%d) ***", Client_List[get_client_id(getpid())].name, get_client_id(getpid()),
-																				  		msg, Client_List[Upipe_receiever].name, Upipe_receiever);
-			cout << "id is: " << get_client_id(getpid()) << "name is: " <<Client_List[get_client_id(getpid())].name << endl;
+			sprintf(broadcast_content,"***  %s (#%d) just piped '%s' to %s (#%d) ***", Client_List[UserID].name, UserID,
+																				  		msg, Client_List[Upipe_receieverID].name, Upipe_receieverID);
 		break;
 		case USER_PIPE_RECIEVER:
-			sprintf(broadcast_content,"***  %s (#%d) just received from %s (#%d) by %s' ***", Client_List[get_client_id(getpid())].name, get_client_id(getpid()),
-																				  			  Client_List[Upipe_sender].name, Upipe_sender, msg);
+			sprintf(broadcast_content,"***  %s (#%d) just received from %s (#%d) by '%s' ***", Client_List[UserID].name, UserID,
+																				  			  Client_List[Upipe_senderID].name, Upipe_senderID, msg);
 		break;
 	}
-	cout << "         braodcast is" << broadcast_content << endl;
+	CList_shm.broadcast_read_check(Client_List);
 	MSG_shm.write_msg(broadcast_content);
 	for(int j= 1; j < CLIENT_LIMIT; j++){			
 		if(Client_List[j].pid  !=  -1 ){  
+			Client_List[j].broadcast_flag = true;
 			kill(Client_List[j].pid, SIGUSR1);
 		}
 	}
@@ -443,11 +466,10 @@ void broadcast( int action, char* msg){
 
 
 int get_client_id(int pid){
-	for(int i = 1; i < CLIENT_LIMIT; i++){
-		if(((Client_state *)Client_List)[i].pid == pid ){
+	for(int i = 1; i < CLIENT_LIMIT; i++)
+		if(((Client_state *)Client_List)[i].pid == pid )
 			return i;
-		}
-	}
+
 	return -1;
 }
 
@@ -459,25 +481,24 @@ void signalhandler(int signo){
 			while (waitpid(-1, &status, WNOHANG) > 0);
 		break;
 		case SIGINT:
-			shmdt(CList_shm.attach_ptr);	//shm detach
-			shmctl(CList_shm.shmid,IPC_RMID,0);	//close shm
-			shmdt(MSG_shm.attach_ptr);	//shm detach
-			shmctl(MSG_shm.shmid,IPC_RMID,0);	//close shm
-			shmdt(Upipe_shm.attach_ptr);	//shm detach
-			shmctl(Upipe_shm.shmid,IPC_RMID,0);	//close shm
+			shmdt(CList_shm.attach_ptr);		//detach CList_shm
+			shmctl(CList_shm.shmid,IPC_RMID,0);	//close  CList_shm
+			shmdt(MSG_shm.attach_ptr);			//detach MSG_shm
+			shmctl(MSG_shm.shmid,IPC_RMID,0);	//close  MSG_shm
+			shmdt(Upipe_shm.attach_ptr);		//detach Upipe_shm
+			shmctl(Upipe_shm.shmid,IPC_RMID,0);	//close  Upipe_shm
 			close(socket_fd);
 			exit(1);
 		break;
 		case SIGUSR1:	//get broadcast and tell msg.
 			cout << shm_msg << endl;
+			Client_List[UserID].broadcast_flag = false;
 		break;
 		case SIGUSR2:	//get Upipe sig.
 			for(int i = 1; i < CLIENT_LIMIT; i++){
-				if(read_record[i] == 0 && Upipe->sender[i].to[get_client_id(getpid())] == true ){	
-					memset(upipe_name,0,sizeof(upipe_name));
-					sprintf(upipe_name,"%dto%d",i, get_client_id(getpid()) );
-					read_record[i] = open(upipe_name,O_RDONLY); 
-					Upipe->sender[i].rfd[get_client_id(getpid())] = read_record[i];
+				if(read_record[i] == false &&  Upipe->sender[i].to[UserID] == true ){
+					Upipe->sender[i].rfd[UserID] = open(Upipe->sender[i].Upipe_name_to_receiver[UserID],O_RDONLY);
+					read_record[i] = true;
 				}
 			}
 		break;
@@ -491,13 +512,13 @@ void convert_argv_to_consntchar(const char *argv[], vector<string> &argv_table) 
 }
 
 void parse_cmd(stringstream &sscmd){
-	bool pipe_flag;	
 	bool create_user_pipe_flag;
 	bool getUpipe_success;
+	bool Upipe_err_flag; 
+	bool pipe_flag;	
 	bool shockMarckflag;
 	bool file_flag;
 	bool target_flag;
-	bool Upipe_err_flag; 
 	Pipe_class current_pipe_record;
 	Pipe_class pipe_reached_target;
 
@@ -540,15 +561,19 @@ void parse_cmd(stringstream &sscmd){
 				while (numb >> temp){
 					pipenumber += temp;
 				}
-
-				if( read_record[pipenumber] != 0 && Upipe->sender[pipenumber].to[get_client_id(getpid() )] == true ){
+				if( read_record[pipenumber] == true && Upipe->sender[pipenumber].to[UserID] == false ){
+					read_record[pipenumber] = false;  //sender left. and client needs to update read_record.
+				}
+				if( read_record[pipenumber] == true && Upipe->sender[pipenumber].to[UserID] == true ){
 					getUpipe_success = true;
-					newProcessIn = read_record[pipenumber]; 
-					Upipe_sender = pipenumber;
-					//reset upipe share.
 					argv_table.pop_back();
-					read_record[pipenumber] =0;
-					Upipe->sender[pipenumber].to[get_client_id(getpid() )] = false;
+					Upipe_senderID = pipenumber;		//for Upipe broadcast and close Upipe
+					newProcessIn = Upipe->sender[pipenumber].rfd[UserID];
+
+
+					//reset upipe's shareMem
+					read_record[pipenumber] = false;
+					Upipe->sender[pipenumber].to[UserID] = false;
 				}
 
 				//check if Upipe accept success. otherwise user(ID)/Upipe not exist.
@@ -560,7 +585,7 @@ void parse_cmd(stringstream &sscmd){
 				}else if(getUpipe_success == false){
 					Upipe_err_flag = true;
 					argv_table.pop_back();
-					cout <<"*** Error: the pipe #" << pipenumber << "->#" << get_client_id(getpid() ) << " does not exist yet. ***" << endl;
+					cout <<"*** Error: the pipe #" << pipenumber << "->#" << UserID << " does not exist yet. ***" << endl;
 					newProcessIn = open("/dev/null", O_RDWR);
 				
 				}else{		
@@ -573,7 +598,6 @@ void parse_cmd(stringstream &sscmd){
 		}
 		
 		if(sign_number[0] == '|'){
-				//cout << "I am piping " << endl;
 				pipe_flag = true;
 				if( isdigit( sign_number[1]) ){			//don't pop sign, in case of '|' at the end of cmd.
 					sign_number = sign_number.substr(1); //skip the first charactor.	
@@ -616,30 +640,29 @@ void parse_cmd(stringstream &sscmd){
 				}  
 				if(isUserExist(pipenumber) == false){
 					Upipe_err_flag = true;
-					cout << "*** Error: user #" << pipenumber << " d does not exist yet. ***" << endl;
+					cout << "*** Error: user #" << pipenumber << " does not exist yet. ***" << endl;
 					newProcessIn = open("/dev/null", O_RDWR);
 					newProcessOut = newProcessIn;
 				}
 				//check if user_pipe exist.
-				if( Upipe->sender[get_client_id(getpid() )].to[pipenumber] == true ){
+				if( Upipe->sender[UserID].to[pipenumber] == true ){
 					Upipe_err_flag = true;
-					cout << "*** Error: the pipe #"<< get_client_id(getpid() )<<">#"<< pipenumber <<" already exists. ***" << endl;
+					cout << "*** Error: the pipe #"<< UserID<<"->#"<< pipenumber <<" already exists. ***" << endl;
 					newProcessIn = open("/dev/null", O_RDWR);
 					newProcessOut = newProcessIn;
 				}
 				//user pipe is avaliable to create.
 				if(Upipe_err_flag == false){
 					create_user_pipe_flag = true;
-					Upipe->sender[get_client_id(getpid() )].to[pipenumber] = true;
-					Upipe_receiever = pipenumber;
+					Upipe->sender[UserID].to[pipenumber] = true;
+					Upipe_receieverID = pipenumber;		//for Upipe broadcast.
 
-
-					memset(upipe_name,0,sizeof(upipe_name));
-					sprintf(upipe_name,"%dto%d",get_client_id(getpid()), pipenumber );
-					mkfifo(upipe_name, 0644);
+					int a = mkfifo(Upipe->sender[UserID].Upipe_name_to_receiver[pipenumber], 0644);
 					kill(Client_List[pipenumber].pid, SIGUSR2);
-					newProcessOut = open(upipe_name, O_WRONLY);
+					newProcessOut = open(Upipe->sender[UserID].Upipe_name_to_receiver[pipenumber], O_WRONLY);
+					Upipe->sender[UserID].wfd[pipenumber] = newProcessOut;
 
+					
 					//broadcast
 					char user_pipe_msg[1024] ={0};
 					string tmp = sscmd.str();
@@ -659,7 +682,6 @@ void parse_cmd(stringstream &sscmd){
 		int pop_out_index = -1;				//for releasig from pipe_vector
 		for(int i = 0; i< pipe_vector.size(); i++){				//there would be only on input in a instruction. won't be ls | cat <0
 			if((pipe_vector[i].get_count() == 0) ){
-				//cout << " I am target" << endl;
 				target_flag = true;
 				pop_out_index = i;
 				newProcessIn = pipe_vector[i].get_read();
@@ -698,7 +720,6 @@ void parse_cmd(stringstream &sscmd){
 		if( pid == 0){	 											// child
 			
 			if(pipe_flag == true){					
-				//cout << "fork: pipe_flag == true, close: " << current_pipe_record.get_read() << ", " << newProcessOut<< endl;
 				close(current_pipe_record.get_read());			//it suppose to close read of new pipe.  If other data want to use the same pipe, STD_read would be useless.
 				dup2(newProcessOut, STDOUT_FILENO);  	// however, it'll effect  client taking data from client pipe. 
 				if(shockMarckflag == true ){
@@ -744,20 +765,23 @@ void parse_cmd(stringstream &sscmd){
 				close(newProcessOut);	
 			}
 			if (getUpipe_success == true ){
-					close(newProcessIn);
+				close(newProcessIn);
+				Upipe->sender[Upipe_senderID].rfd[UserID] = -1;
+				unlink(Upipe->sender[Upipe_senderID].Upipe_name_to_receiver[UserID]);
 			}
 			if(target_flag == true){
 				close(pipe_reached_target.get_read());
 				pipe_vector.erase(pipe_vector.begin()+pop_out_index);
 			}
-			if(create_user_pipe_flag){
+			if(create_user_pipe_flag == true){
 				close(newProcessOut);
+				Upipe->sender[UserID].wfd[Upipe_receieverID] = -1; 
 			}
 			if(STDOUT_FILENO == newProcessOut || file_flag == true ){		//command pid want to printout to console. or wait writting to file.
 				int status;															
 				waitpid(pid, &status, 0);
 			}
-			//cout << "pipe_vector size at the end: " << pipe_vector.size() << endl;
+
 			
 		}
 	}
@@ -770,13 +794,11 @@ bool isSpecial_cmd(stringstream &sscmd){
 	
 	ss << cmdline;
     ss>> parsed_word;
-    if(parsed_word == "printenv"){
+	if(parsed_word == "printenv"){
 		ss >> parsed_word;
-		if(parsed_word == "PATH" || parsed_word == "LANG"){
-			char* pPath = getenv(parsed_word.c_str());
-			if(pPath != NULL)
-				cout<<pPath<<endl;
-		}
+		char* pPath = getenv(parsed_word.c_str());
+		if(pPath != NULL)
+			cout << pPath << endl;;
 		return true;
     }
     else if(parsed_word == "setenv"){
