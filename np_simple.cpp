@@ -60,10 +60,7 @@ vector<Pipe_class> pipe_vector;
 
 int main(int argc, char* argv[]){
 	
-	setenv("PATH", "bin:.", 1) ; 
-    string cmd;
-	//char input_buffer[1024]= {0};
-	string output_buffer="% ";
+	
 	int socket_fd =0;
 	int client_fd = 0;
 	socket_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -82,8 +79,16 @@ int main(int argc, char* argv[]){
     serverInfo.sin_port = htons(atoi(argv[1]));
 	bind(socket_fd, (struct sockaddr *)&serverInfo, sizeof(serverInfo));
 	listen(socket_fd, 30);
-	stringstream sscmd;
 	
+	
+
+	signal(SIGCHLD, childHandler);
+	setenv("PATH", "bin:.", 1) ; 
+    string cmd;
+	stringstream sscmd;
+	//char input_buffer[1024]= {0};
+	string output_buffer="% ";
+
 	while(true){
 
 		client_fd = accept(socket_fd, (struct sockaddr*) &clientInfo, &addrlen);
@@ -110,15 +115,12 @@ int main(int argc, char* argv[]){
 				int k =0;
 				strncpy(temp, input_buffer, sizeof(input_buffer)); 
 				memset( input_buffer, '\0', sizeof(input_buffer)*sizeof(char) );
-				for(int i = 0; i< sizeof(temp); i++ ){
-					if(temp[i] == '\r'){
+				for(int i = 0; i< strlen(temp); i++ ){
+					if(temp[i] == '\r' || temp[i] == '\n')
 						continue;
-					}else if(temp[i] == '\n'){
-						continue;
-					}else{
-						input_buffer[k] = temp[i];
-						k++;
-					}
+					
+					input_buffer[k] = temp[i];
+					k++;
 				}
 				cmd = input_buffer;
 				sscmd.str("");
@@ -174,7 +176,6 @@ void parse_cmd(stringstream &sscmd){
 		target_flag = false;
 		unknown_cmd = false;
 		string teststring = sscmd.str();
-		//cout <<"string test in parsing " << teststring << endl;
 		vector<string> argv_table;
 		
 		argv_table = retrieve_argv(sscmd);   // parse out cmd before sign |!>
@@ -303,9 +304,7 @@ void parse_cmd(stringstream &sscmd){
 			//get argv.			
 			const char *pargv[argv_table.size() + 1];
 			convert_argv_to_consntchar(pargv, argv_table);
-			//cout << pargv[0] << endl;
-			//cout << pargv[1] << endl;
-			//cout << "argv_table.size() is: " << argv_table.size() << endl;
+
 			execvp(pargv[0], (char **) pargv);
 			if(execvp(pargv[0], (char **) pargv) == -1 ){
 				fprintf(stderr,"Unknown command: [%s].\n",pargv[0]);
@@ -316,7 +315,7 @@ void parse_cmd(stringstream &sscmd){
 			
 		} else if(pid >0 ){			//parent
 			
-			signal(SIGCHLD, childHandler);
+			
 			for(int i = 0; i< pipe_vector.size(); i++){
 				pipe_vector[i].count_decrease();
 			}
@@ -345,9 +344,9 @@ bool special_cmd(stringstream &sscmd){
     ss>> parsed_word;
     if(parsed_word == "printenv"){
 		ss >> parsed_word;
-			char* pPath = getenv(parsed_word.c_str());
-			if(pPath != NULL)
-				cout<<pPath<<endl;
+		char* pPath = getenv(parsed_word.c_str());
+		if(pPath != NULL)
+			cout<<pPath<<endl;
 		return true;
     }
     else if(parsed_word == "setenv"){

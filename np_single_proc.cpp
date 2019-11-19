@@ -118,6 +118,7 @@ class Client_state{
 		void Client_state_init(){
 			client_fd = -1;
 			client_ID = -1;
+			memset( client_name, '\0', CLIENT_NAME_SIZE*sizeof(char) );
 			strncpy(client_name,"(no name)",strlen("(no name)") );
 			memset( IP, 0, INET_ADDRSTRLEN*sizeof(char) );
 			memset( charID, 0, sizeof(charID) );
@@ -192,20 +193,7 @@ int main(int argc, char* argv[]){
 	//struct sockaddr_storage client_addr;
 	socklen_t addrlen;
 	
-	//char input_buffer[INPUT_BUFFER_SIZE]= {0};
-	int nbytes;
-	int rv;		//don't know yet/////////////////////////////////
-	struct addrinfo hints, *ai, *p;		
-	
-	memset(&hints, 0, sizeof hints);
-	hints.ai_family = AF_UNSPEC;				//it's not fixed. give elastic option.
-	hints.ai_socktype = SOCK_STREAM;	//stream: connect oriented.
-	hints.ai_flags = AI_PASSIVE;				//don't know yet/////////////////////////////////
-													//argv[1] is port setted when execute the program.   '80' usually used for http .etc.
-	if( (rv = getaddrinfo(NULL, argv[1], &hints, &ai) ) != 0){			//getinfo helps to confige pre setting. three input and 1 output. if success,  return 0.
-		//fprintf(stderr, "selectserver: %s !!!!!!!!\n", gai_strerror(rv));		//don't know yet/////////////////////////////////
-		exit(1);				//don't know yet/////////////////////////////////
-	}
+
 	listener = socket(AF_INET, SOCK_STREAM, 0);		//AF_INET is IPV4. 
 	if (listener == -1){
         cout <<"Fail to create a socket." << endl;
@@ -221,8 +209,9 @@ int main(int argc, char* argv[]){
     serverSockInfo.sin_addr.s_addr = INADDR_ANY;
     serverSockInfo.sin_port = htons(atoi(argv[1]));
 	bind(listener, (struct sockaddr *)&serverSockInfo, sizeof(serverSockInfo));
-	
 	listen(listener, CLIENT_LIMIT);
+
+	
 	FD_SET(listener, &master);
 	fdmax = listener;
 	int SERVER_STDIN_FD = dup(STDIN_FILENO);
@@ -294,15 +283,13 @@ int main(int argc, char* argv[]){
 					int k =0;
 					strncpy(temp, input_buffer, sizeof(input_buffer)); 
 					memset( input_buffer, '\0', sizeof(input_buffer)*sizeof(char) );
-					for(int i = 0; i< sizeof(temp); i++ ){
-						if(temp[i] == '\r'){
+					for(int i = 0; i< strlen(temp); i++ ){
+						if(temp[i] == '\r' || temp[i] == '\n')
 							continue;
-						}else if(temp[i] == '\n'){
-							continue;
-						}else{
-							input_buffer[k] = temp[i];
-							k++;
-						}
+						
+						input_buffer[k] = temp[i];
+						k++;
+						
 					}
 					
 					string cmd = input_buffer;
@@ -319,7 +306,7 @@ int main(int argc, char* argv[]){
 								pipe_vector.erase(it);
 							}
 						}
-						Client_manage_list[serving_client_id].reset();
+						Client_manage_list[serving_client_id].Client_state_init();
 						clearenv();					//reset parent env
 						setenv("PATH", "bin:.", 1) ;
 						close(i);
@@ -667,7 +654,6 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 						pipe_vector.push_back( current_pipe_record );
 						
 						newProcessOut = current_pipe_record.get_Upipe_write();
-						newProcessErr = current_pipe_record.get_Upipe_write();
 						
 						//broadcast
 						char user_pipe_msg[1024] ={0};
@@ -750,7 +736,6 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 			} else if(create_user_pipe_flag == true){	//sending msg to reciever
 				close(current_pipe_record.get_Upipe_read());
 				dup2(newProcessOut, STDOUT_FILENO);
-				dup2(newProcessErr, STDERR_FILENO);
 				close(newProcessOut);  //newProcessOut = newProcessErr
 			}
 			//if there is no fd change,  eveytime child fork starts with shell_std_in/out/err.  e.q. isolated cmd like ls in "cat file |2 ls number"

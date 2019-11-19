@@ -147,17 +147,10 @@ class Sh_mem{
 class Upipe_receive{
 	public:
 		int to[CLIENT_LIMIT];
-		int rfd[CLIENT_LIMIT];
-		int wfd[CLIENT_LIMIT];
 		char Upipe_name_to_receiver[CLIENT_LIMIT][UPIPE_NAME_SIZE];
 };
 class Upipe_send{
 	public:
-		void Upipe_init(int leaving_clientID){
-			for(int i=0; i < CLIENT_LIMIT; i++){
-				
-			}
-		}
 		Upipe_receive sender[CLIENT_LIMIT];
 };
 vector<Pipe_class> pipe_vector;
@@ -172,32 +165,34 @@ void get_cmd(char*);
 void broadcast( int , char*);
 bool isUserExist(int);
 vector<string> retrieve_argv(stringstream&);
-/////////Global Variable//////////////
+////////////////////////////////////////////////////////////////
+///////////////////////Global Variable//////////////////////////
+////////////////////////////////////////////////////////////////
 Sh_mem CList_shm, MSG_shm, Upipe_shm;
 Client_state *Client_List;
 Upipe_send* Upipe;
 char *shm_msg;
-bool read_record[31] = {false};
+int read_record[31];
 int Upipe_receieverID = 0;
 int Upipe_senderID = 0;
 int UserID = -1;
 bool shell_exit = false;
-///////////////////////////////////////
-
+////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////
 
 int socket_fd =0;
 int client_fd = 0;
 
 int main(int argc, char* argv[]){
-	
-	///////////////////////connection////////////////////////////////
-
+	////////////////////////////////////////////////////////////////
+	///////////////////////connection///////////////////////////////
+	////////////////////////////////////////////////////////////////
 	socket_fd = socket(AF_INET, SOCK_STREAM, 0);
 	if (socket_fd == -1){
         cout <<"Fail to create a socket." << endl;
     }
 	int opt = 1;
-	setsockopt(socket_fd, SOL_SOCKET,SO_REUSEADDR,&opt, sizeof(opt));
+	setsockopt(socket_fd, SOL_SOCKET,SO_REUSEADDR, &opt, sizeof(opt));
 	setsockopt(socket_fd, SOL_SOCKET,SO_REUSEPORT, &opt, sizeof(opt));
 	struct sockaddr_in serverInfo,clientInfo;
 	socklen_t  addrlen = sizeof(clientInfo);
@@ -208,9 +203,11 @@ int main(int argc, char* argv[]){
     serverInfo.sin_port = htons(atoi(argv[1]));
 	bind(socket_fd, (struct sockaddr *)&serverInfo, sizeof(serverInfo));
 	listen(socket_fd, 30);
-	////////////////////////////////////////////////////////////////
 
-	////////////////////share mem data initialization///////////////
+
+	////////////////////////////////////////////////////////////////
+	///////////////share mem data initialization////////////////////
+	////////////////////////////////////////////////////////////////
 	void* temp;
 	//msg 
 	MSG_shm.creat_shmid(SHARE_MSG_KEY, SHARE_MSG_SIZE); 
@@ -248,22 +245,26 @@ int main(int argc, char* argv[]){
 	for(int i = 0; i < CLIENT_LIMIT; i++)
 		for(int j = 0; j < CLIENT_LIMIT; j++){
 			Upipe->sender[i].to[j] = false;
-			Upipe->sender[i].rfd[j] = -1;
-			Upipe->sender[i].wfd[j] = -1;
 			memset(Upipe->sender[i].Upipe_name_to_receiver[j],0,UPIPE_NAME_SIZE);
 			sprintf(Upipe->sender[i].Upipe_name_to_receiver[j],"user_pipe/%dto%d", i, j);
 		}
 			
 	signal(SIGINT, signalhandler);
-	signal(SIGUSR1, signalhandler);
-	signal(SIGUSR2, signalhandler);
+	signal(SIGUSR1, signalhandler);		//for broadcast, and tell.
+	signal(SIGUSR2, signalhandler);		//for Upipe.
+	////////////////////////////////////////////////////////////////
 	////////////////////////////////////////////////////////////////
 
+	////////////////////////////////////////////////////////////////
 	/////////////////basic env for each shell///////////////////////
+	////////////////////////////////////////////////////////////////
 	setenv("PATH", "bin:.", 1); 
 	string cmd;
 	stringstream sscmd;
+	memset(read_record, -1, sizeof(read_record));
 	////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////
+
 	//server listernig loop.
 	while(true){
 
@@ -281,6 +282,7 @@ int main(int argc, char* argv[]){
 
 		
 		}else if(replica_pid == 0){ ////////////client/////////
+
 			//////////client initialization////////////////
 			////////////////////////////////////////////////
 			dup2(client_fd, STDIN_FILENO);
@@ -293,15 +295,15 @@ int main(int argc, char* argv[]){
 			string cmd;
 			char input_buffer[INPUT_BUFFER_SIZE]= {0};
 			char temp[INPUT_BUFFER_SIZE];
-
 			//////////end client initialization////////////////
 			//////////////////////////////////////////////////
 
 			
 			while(true){
 				cout << "% " << flush;
-
+				///////////////////////////////////////////
 				//////////input cmd processing/////////////
+				///////////////////////////////////////////
 				memset(input_buffer,0,strlen(input_buffer));
 				read(STDIN_FILENO, input_buffer, sizeof(input_buffer) );
 				int k =0;
@@ -319,6 +321,8 @@ int main(int argc, char* argv[]){
 				sscmd.clear();
 				sscmd.str(cmd);
 				///////////////////////////////////////////
+				///////////////////////////////////////////
+
 
 				if( !isSpecial_cmd(sscmd)){
 					if(shell_exit == true){
@@ -330,30 +334,23 @@ int main(int argc, char* argv[]){
 					}
 				}
 			}
+
 			broadcast(MEMBER_LEAVE, NULL);
 			Client_List[UserID].init();
 			//release unread Upipe
 			for(int i = 1 ; i < CLIENT_LIMIT; i++){
 				if(Upipe->sender[UserID].to[i] == true){
-					close(Upipe->sender[UserID].rfd[i]);
-					// close(Upipe->sender[get_client_id(getpid())].wfd[i]); //no need. it close wfd right after write to Upipe.
 					Upipe->sender[UserID].to[i] = false;
-					Upipe->sender[UserID].rfd[i] = -1;
-					Upipe->sender[UserID].wfd[i] = -1;
 					unlink(Upipe->sender[UserID].Upipe_name_to_receiver[i]);
+					//need a mechenism to tell receiver to close readfd.
 				}
 				if(Upipe->sender[i].to[UserID] == true){	
-					close(Upipe->sender[i].rfd[UserID]);
-					//close(Upipe->sender[i].wfd[get_client_id(getpid())]);	//no need. it close wfd right after write to Upipe.	
+					close(read_record[i]);
 					Upipe->sender[i].to[UserID] = false;
-					Upipe->sender[i].rfd[UserID] = -1;	
-					Upipe->sender[i].wfd[UserID] = -1;	
-					unlink(Upipe->sender[i].Upipe_name_to_receiver[UserID]   );
+					unlink(Upipe->sender[i].Upipe_name_to_receiver[UserID]);
+					//  read_record[i] = -1;  //no need to reset read. 
 				}
 			}
-			close(STDIN_FILENO);
-			close(STDOUT_FILENO);
-			close(STDERR_FILENO);
 			exit(-1);
 		}
 		//////////////////////////
@@ -496,9 +493,8 @@ void signalhandler(int signo){
 		break;
 		case SIGUSR2:	//get Upipe sig.
 			for(int i = 1; i < CLIENT_LIMIT; i++){
-				if(read_record[i] == false &&  Upipe->sender[i].to[UserID] == true ){
-					Upipe->sender[i].rfd[UserID] = open(Upipe->sender[i].Upipe_name_to_receiver[UserID],O_RDONLY);
-					read_record[i] = true;
+				if(read_record[i] == -1 &&  Upipe->sender[i].to[UserID] == true ){
+					read_record[i] = open(Upipe->sender[i].Upipe_name_to_receiver[UserID],O_RDONLY);
 				}
 			}
 		break;
@@ -512,8 +508,8 @@ void convert_argv_to_consntchar(const char *argv[], vector<string> &argv_table) 
 }
 
 void parse_cmd(stringstream &sscmd){
-	bool create_user_pipe_flag;
 	bool getUpipe_success;
+	bool create_user_pipe_flag;
 	bool Upipe_err_flag; 
 	bool pipe_flag;	
 	bool shockMarckflag;
@@ -527,13 +523,14 @@ void parse_cmd(stringstream &sscmd){
 		int newProcessIn = STDIN_FILENO;   //shell process's fd 0,1,2 are original one. never changed.
  		int newProcessOut = STDOUT_FILENO;
 		int newProcessErr = STDERR_FILENO;
-		pipe_flag = false;
-		create_user_pipe_flag = false;
 		getUpipe_success = false;
+		create_user_pipe_flag = false;
+		Upipe_err_flag = false;
+		pipe_flag = false;
 		shockMarckflag = false;
 		file_flag	= false;
 		target_flag = false;
-		Upipe_err_flag = false;
+		
 
 		string teststring = sscmd.str();
 		vector<string> argv_table = retrieve_argv(sscmd);   // parse out cmd before sign |!><
@@ -561,19 +558,18 @@ void parse_cmd(stringstream &sscmd){
 				while (numb >> temp){
 					pipenumber += temp;
 				}
-				if( read_record[pipenumber] == true && Upipe->sender[pipenumber].to[UserID] == false ){
-					read_record[pipenumber] = false;  //sender left. and client needs to update read_record.
+				if( read_record[pipenumber] != -1 && Upipe->sender[pipenumber].to[UserID] == false ){
+					read_record[pipenumber] = -1;  //sender left. and client needs to update read_record.
 				}
-				if( read_record[pipenumber] == true && Upipe->sender[pipenumber].to[UserID] == true ){
+				if( read_record[pipenumber] != -1 && Upipe->sender[pipenumber].to[UserID] == true ){
 					getUpipe_success = true;
 					argv_table.pop_back();
 					Upipe_senderID = pipenumber;		//for Upipe broadcast and close Upipe
-					newProcessIn = Upipe->sender[pipenumber].rfd[UserID];
+					newProcessIn = read_record[pipenumber];
 
 
 					//reset upipe's shareMem
-					read_record[pipenumber] = false;
-					Upipe->sender[pipenumber].to[UserID] = false;
+					read_record[pipenumber] = -1;
 				}
 
 				//check if Upipe accept success. otherwise user(ID)/Upipe not exist.
@@ -625,9 +621,6 @@ void parse_cmd(stringstream &sscmd){
 				}
 		}
 		
-		int Upipe_read_tmp;   //L 663
-		int Upipe_write_tmp;	// L664
-		bool double_Upipe = false;
 		if(sign_number[0] =='>'){
 			if( isdigit( sign_number[1]) ){
 				sign_number = sign_number.substr(1); //skip the first charactor.	
@@ -657,11 +650,9 @@ void parse_cmd(stringstream &sscmd){
 					Upipe->sender[UserID].to[pipenumber] = true;
 					Upipe_receieverID = pipenumber;		//for Upipe broadcast.
 
-					int a = mkfifo(Upipe->sender[UserID].Upipe_name_to_receiver[pipenumber], 0644);
-					kill(Client_List[pipenumber].pid, SIGUSR2);
+					int a = mkfifo(Upipe->sender[UserID].Upipe_name_to_receiver[pipenumber], 0644);		
+					kill(Client_List[pipenumber].pid, SIGUSR2);		
 					newProcessOut = open(Upipe->sender[UserID].Upipe_name_to_receiver[pipenumber], O_WRONLY);
-					Upipe->sender[UserID].wfd[pipenumber] = newProcessOut;
-
 					
 					//broadcast
 					char user_pipe_msg[1024] ={0};
@@ -720,7 +711,7 @@ void parse_cmd(stringstream &sscmd){
 		if( pid == 0){	 											// child
 			
 			if(pipe_flag == true){					
-				close(current_pipe_record.get_read());			//it suppose to close read of new pipe.  If other data want to use the same pipe, STD_read would be useless.
+				close(current_pipe_record.get_read());	//it suppose to close read of new pipe.  If other data want to use the same pipe, STD_read would be useless.
 				dup2(newProcessOut, STDOUT_FILENO);  	// however, it'll effect  client taking data from client pipe. 
 				if(shockMarckflag == true ){
 					dup2(newProcessErr, STDERR_FILENO);		// newProcessErr = newProcessOut
@@ -734,7 +725,7 @@ void parse_cmd(stringstream &sscmd){
 				dup2(newProcessErr, STDERR_FILENO);
 				close(newProcessOut);  //newProcessOut = newProcessErr
 			}
-			//if there is no fd change,  eveytime child fork starts with shell_std_in/out/err.  e.q. isolated cmd like ls in "cat file |2 ls number"
+			//if there is no fd change,  eveytime child fork starts with shell_std_in/out/err. 
 			if(target_flag == true || getUpipe_success == true){
 				dup2(newProcessIn, STDIN_FILENO);  
 				close(newProcessIn);
@@ -766,7 +757,8 @@ void parse_cmd(stringstream &sscmd){
 			}
 			if (getUpipe_success == true ){
 				close(newProcessIn);
-				Upipe->sender[Upipe_senderID].rfd[UserID] = -1;
+				read_record[Upipe_senderID] = -1;
+				Upipe->sender[Upipe_senderID].to[UserID] = false;
 				unlink(Upipe->sender[Upipe_senderID].Upipe_name_to_receiver[UserID]);
 			}
 			if(target_flag == true){
@@ -775,7 +767,6 @@ void parse_cmd(stringstream &sscmd){
 			}
 			if(create_user_pipe_flag == true){
 				close(newProcessOut);
-				Upipe->sender[UserID].wfd[Upipe_receieverID] = -1; 
 			}
 			if(STDOUT_FILENO == newProcessOut || file_flag == true ){		//command pid want to printout to console. or wait writting to file.
 				int status;															
