@@ -510,7 +510,8 @@ void convert_argv_to_consntchar(const char *argv[], vector<string> &argv_table) 
 void parse_cmd(stringstream &sscmd){
 	bool getUpipe_success;
 	bool create_user_pipe_flag;
-	bool Upipe_err_flag; 
+	bool Upipe_err_flag1;
+	bool Upipe_err_flag2;  
 	bool pipe_flag;	
 	bool shockMarckflag;
 	bool file_flag;
@@ -525,7 +526,8 @@ void parse_cmd(stringstream &sscmd){
 		int newProcessErr = STDERR_FILENO;
 		getUpipe_success = false;
 		create_user_pipe_flag = false;
-		Upipe_err_flag = false;
+		Upipe_err_flag1 = false;
+		Upipe_err_flag2 = false; 
 		pipe_flag = false;
 		shockMarckflag = false;
 		file_flag	= false;
@@ -574,12 +576,12 @@ void parse_cmd(stringstream &sscmd){
 
 				//check if Upipe accept success. otherwise user(ID)/Upipe not exist.
 				if(isUserExist(pipenumber) == false){	 //if not exist, return 0;
-					Upipe_err_flag = true;
+					Upipe_err_flag1 = true;
 					argv_table.pop_back();
 					cout <<"*** Error: user #" << pipenumber <<" does not exist yet. ***" << endl;
 					newProcessIn = open("/dev/null", O_RDWR);	
 				}else if(getUpipe_success == false){
-					Upipe_err_flag = true;
+					Upipe_err_flag1 = true;
 					argv_table.pop_back();
 					cout <<"*** Error: the pipe #" << pipenumber << "->#" << UserID << " does not exist yet. ***" << endl;
 					newProcessIn = open("/dev/null", O_RDWR);
@@ -632,20 +634,20 @@ void parse_cmd(stringstream &sscmd){
 					pipenumber += test;
 				}  
 				if(isUserExist(pipenumber) == false){
-					Upipe_err_flag = true;
+					Upipe_err_flag2 = true;
 					cout << "*** Error: user #" << pipenumber << " does not exist yet. ***" << endl;
 					newProcessIn = open("/dev/null", O_RDWR);
 					newProcessOut = newProcessIn;
 				}
 				//check if user_pipe exist.
 				if( Upipe->sender[UserID].to[pipenumber] == true ){
-					Upipe_err_flag = true;
+					Upipe_err_flag2 = true;
 					cout << "*** Error: the pipe #"<< UserID<<"->#"<< pipenumber <<" already exists. ***" << endl;
 					newProcessIn = open("/dev/null", O_RDWR);
 					newProcessOut = newProcessIn;
 				}
 				//user pipe is avaliable to create.
-				if(Upipe_err_flag == false){
+				if(Upipe_err_flag2 == false){
 					create_user_pipe_flag = true;
 					Upipe->sender[UserID].to[pipenumber] = true;
 					Upipe_receieverID = pipenumber;		//for Upipe broadcast.
@@ -731,7 +733,7 @@ void parse_cmd(stringstream &sscmd){
 				close(newProcessIn);
 			}
 
-			if(Upipe_err_flag == true){	//overlap INput if itslef is target.
+			if(Upipe_err_flag1 == true || Upipe_err_flag2 == true ){	//overlap INput if itslef is target.
 				dup2(newProcessIn, STDIN_FILENO);  
 				dup2(newProcessOut, STDOUT_FILENO);  		//if it's '< error', output will overlap with other pioneer and target it's self.
 				close(newProcessIn);	//in == out

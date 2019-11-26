@@ -492,7 +492,8 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 	bool shockMarckflag;
 	bool file_flag;
 	bool target_flag;
-	bool Upipe_err_flag;
+	bool Upipe_err_flag1;
+	bool Upipe_err_flag2;
 	//bool unknown_cmd = false;     //unknown command still not work. if "ls | cd", pipe still remain in the npshell. 
 	Pipe_class current_pipe_record;
 	Pipe_class pipe_reached_target;
@@ -509,7 +510,8 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 		shockMarckflag = false;
 		file_flag	= false;
 		target_flag = false;
-		Upipe_err_flag = false;
+		Upipe_err_flag1 = false;
+		Upipe_err_flag2 = false;
 		vector<string> argv_table = retrieve_argv(sscmd);   // parse out cmd before sign |!><
 		if (argv_table.empty()   ){
 			break;
@@ -557,10 +559,10 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 						dprintf(Client_manage_list[serving_client_id].client_fd, "*** Error: user #%d does not exist yet. ***\n", pipenumber);
 						argv_table.pop_back();
 						newProcessIn = open("/dev/null", O_RDWR);	
-						Upipe_err_flag = true;
+						Upipe_err_flag1 = true;
 					}else if(isRecieveing_Upipe == false){
 						dprintf(Client_manage_list[serving_client_id].client_fd, "*** Error: the pipe #%d->#%d does not exist yet. ***\n", Client_manage_list[pipenumber].client_ID, Client_manage_list[serving_client_id].client_ID);
-						Upipe_err_flag = true;
+						Upipe_err_flag1 = true;
 						argv_table.pop_back();
 						newProcessIn = open("/dev/null", O_RDWR);
 					}else{		
@@ -620,7 +622,7 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 					if(isUserExist(pipenumber) == false){
 						dprintf(Client_manage_list[serving_client_id].client_fd,"*** Error: user #%d does not exist yet. ***\n",pipenumber);
 						//argv_table.pop_back();
-						Upipe_err_flag = true;
+						Upipe_err_flag2 = true;
 						newProcessIn = open("/dev/null", O_RDWR);
 						newProcessOut = newProcessIn;
 						//return 0;
@@ -629,14 +631,14 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 						if( ((*it).isUserPipe == true ) && ((*it).client_ID == pipenumber)  && ((*it).sender == serving_client_id) ){
 								dprintf(Client_manage_list[serving_client_id].client_fd,"*** Error: the pipe #%d->#%d already exists. ***\n",Client_manage_list[serving_client_id].client_ID, Client_manage_list[pipenumber].client_ID);
 								//argv_table.pop_back();
-								Upipe_err_flag = true;
+								Upipe_err_flag2 = true;
 								newProcessIn = open("/dev/null", O_RDWR);
 								newProcessOut = newProcessIn;
 								//return 0;
 							}
 					}
 					//user pipe is avaliable to create.
-					if(Upipe_err_flag == false){
+					if(Upipe_err_flag2 == false){
 						Client_manage_list[serving_client_id].ID_to_reciever = pipenumber; //for broadcasting msg.
 						create_user_pipe_flag = true;
 						
@@ -681,7 +683,7 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 				//cout << " I am target" << endl;
 				target_flag = true;
 				pop_out_index = i;
-				if(Upipe_err_flag == false)
+				if(Upipe_err_flag1 == false && Upipe_err_flag2 == false)
 					newProcessIn = pipe_vector[i].get_read();
 				pipe_reached_target = pipe_vector[i];
 				close(pipe_vector[i].get_write() );			//write to pipe which arrives target will be useless. it'll be closed in both child and parent process.
@@ -755,7 +757,7 @@ int parse_cmd(int serving_client_id, stringstream &sscmd){
 				close(newProcessIn);
 			}
 			
-			if(Upipe_err_flag == true){
+			if(Upipe_err_flag1 == true || Upipe_err_flag2 == true){
 				dup2(newProcessIn, STDIN_FILENO);  
 				dup2(newProcessOut, STDOUT_FILENO);  		//if it's '< error', output will overlap with other pioneer and target it's self.
 				close(newProcessIn);	//in == out
